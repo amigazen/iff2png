@@ -8,13 +8,16 @@
 #include "main.h"
 #include "debug.h"
 
-static const char *verstag = "$VER: iff2png 1.0 (19.12.2025)";
+static const char *verstag = "$VER: iff2png 1.1 (19.12.2025)";
 
-/* Command-line template - two required positional file arguments (no keyword names) */
-static const char TEMPLATE[] = "SOURCE/A,TARGET/A";
+/* Command-line template - two required positional file arguments and optional FORCE switch */
+static const char TEMPLATE[] = "SOURCE/A,TARGET/A,FORCE/S";
 
 /* Usage string */
-static const char USAGE[] = "Usage: iff2png INPUT OUTPUT\n";
+static const char USAGE[] = "Usage: iff2png INPUT OUTPUT [FORCE]\n"
+                             "  INPUT  - Input IFF image file\n"
+                             "  OUTPUT - Output PNG file\n"
+                             "  FORCE  - Overwrite existing output file\n";
 
 /* Library base - needed for proto includes */
 struct Library *IFFParseBase;
@@ -26,12 +29,15 @@ struct Library *IFFParseBase;
 int main(int argc, char **argv)
 {
     struct RDArgs *rdargs;
-    LONG args[2];
+    LONG args[3]; /* SOURCE, TARGET, FORCE */
     struct IFFPicture *picture;
     UBYTE *rgbData;
     ULONG rgbSize;
     struct PNGConfig config;
     LONG result;
+    BOOL forceOverwrite;
+    BPTR lock;
+    struct FileInfoBlock fib;
     
     /* Initialize config structure to zero */
     config.color_type = 0;
@@ -50,12 +56,12 @@ int main(int argc, char **argv)
     }
     
     /* Initialize args array - ReadArgs will fill with pointers to strings */
-    args[0] = 0;
-    args[1] = 0;
+    args[0] = 0; /* SOURCE */
+    args[1] = 0; /* TARGET */
+    args[2] = 0; /* FORCE (boolean) */
     
     /* Parse command-line arguments */
-    /* Template "FILE/A,FILE/A" - two required positional file arguments */
-    /* Usage: iff2png input.iff output.png */
+    /* Template "SOURCE/A,TARGET/A,FORCE/S" - two required files and optional FORCE switch */
     rdargs = ReadArgs((STRPTR)TEMPLATE, args, NULL);
     if (!rdargs) {
         /* ReadArgs returns NULL on failure (e.g., missing required /A arguments) */
@@ -67,11 +73,75 @@ int main(int argc, char **argv)
     
     /* With /A modifier, ReadArgs ensures args are filled, but check anyway */
     if (!args[0] || !args[1]) {
+        PutStr("Error: Missing required arguments\n");
         PutStr((STRPTR)USAGE);
         FreeArgs(rdargs);
         CloseLibrary(IFFParseBase);
         IFFParseBase = NULL;
         return (int)RETURN_FAIL;
+    }
+    
+    /* Get FORCE switch value (non-zero if set) */
+    forceOverwrite = (args[2] != 0);
+    
+    /* Check if input file exists */
+    lock = Lock((STRPTR)args[0], ACCESS_READ);
+    if (!lock) {
+        PutStr("Error: Input file does not exist: ");
+        PutStr((STRPTR)args[0]);
+        PutStr("\n");
+        FreeArgs(rdargs);
+        CloseLibrary(IFFParseBase);
+        IFFParseBase = NULL;
+        return (int)RETURN_FAIL;
+    }
+    
+    /* Check if it's actually a file (not a directory) */
+    if (Examine(lock, &fib)) {
+        if (fib.fib_DirEntryType > 0) {
+            /* It's a directory, not a file */
+            UnLock(lock);
+            PutStr("Error: Input path is a directory, not a file: ");
+            PutStr((STRPTR)args[0]);
+            PutStr("\n");
+            FreeArgs(rdargs);
+            CloseLibrary(IFFParseBase);
+            IFFParseBase = NULL;
+            return (int)RETURN_FAIL;
+        }
+    }
+    UnLock(lock);
+    
+    /* Check if output file already exists */
+    lock = Lock((STRPTR)args[1], ACCESS_READ);
+    if (lock) {
+        /* File exists - check if it's a directory */
+        if (Examine(lock, &fib)) {
+            if (fib.fib_DirEntryType > 0) {
+                /* It's a directory */
+                UnLock(lock);
+                PutStr("Error: Output path is a directory: ");
+                PutStr((STRPTR)args[1]);
+                PutStr("\n");
+                FreeArgs(rdargs);
+                CloseLibrary(IFFParseBase);
+                IFFParseBase = NULL;
+                return (int)RETURN_FAIL;
+            }
+        }
+        UnLock(lock);
+        
+        /* File exists and is not a directory */
+        if (!forceOverwrite) {
+            PutStr("Error: Output file already exists: ");
+            PutStr((STRPTR)args[1]);
+            PutStr("\n");
+            PutStr("Use FORCE to overwrite existing file\n");
+            FreeArgs(rdargs);
+            CloseLibrary(IFFParseBase);
+            IFFParseBase = NULL;
+            return (int)RETURN_FAIL;
+        }
     }
     
     /* Create picture object */
@@ -84,21 +154,15 @@ int main(int argc, char **argv)
         return (int)RETURN_FAIL;
     }
     
-    /* Debug: Show what file we're trying to open */
-    printf("Opening file: %s\n", (char *)args[0]);
-    fflush(stdout);
-    
     /* Open IFF file - args[0] is a STRPTR (pointer to string) from ReadArgs */
-    printf("Calling OpenIFFPicture...\n");
-    fflush(stdout);
     result = OpenIFFPicture(picture, (const char *)args[0]);
-    printf("OpenIFFPicture returned: %ld\n", result);
-    fflush(stdout);
     if (result != RETURN_OK) {
         PutStr("Error: Cannot open IFF file: ");
+        PutStr((STRPTR)args[0]);
+        PutStr("\n");
+        PutStr("  ");
         PutStr((STRPTR)GetErrorString(picture));
         PutStr("\n");
-        CloseIFFPicture(picture);
         FreeIFFPicture(picture);
         FreeArgs(rdargs);
         CloseLibrary(IFFParseBase);
@@ -109,7 +173,10 @@ int main(int argc, char **argv)
     /* Parse IFF structure */
     result = ParseIFFPicture(picture);
     if (result != RETURN_OK) {
-        PutStr("Error: Cannot parse IFF file: ");
+        PutStr("Error: Invalid or corrupted IFF file: ");
+        PutStr((STRPTR)args[0]);
+        PutStr("\n");
+        PutStr("  ");
         PutStr((STRPTR)GetErrorString(picture));
         PutStr("\n");
         CloseIFFPicture(picture);
@@ -135,11 +202,7 @@ int main(int argc, char **argv)
     }
     
     /* Decode image to RGB */
-    printf("Calling DecodeToRGB...\n");
-    fflush(stdout);
     result = DecodeToRGB(picture, &rgbData, &rgbSize);
-    printf("DecodeToRGB returned: %ld, rgbData=%p, size=%lu\n", result, rgbData, rgbSize);
-    fflush(stdout);
     if (result != RETURN_OK) {
         PutStr("Error: Cannot decode image: ");
         PutStr((STRPTR)GetErrorString(picture));
@@ -153,13 +216,9 @@ int main(int argc, char **argv)
     }
     
     /* Get optimal PNG configuration */
-    printf("Calling GetOptimalPNGConfig...\n");
-    fflush(stdout);
     result = GetOptimalPNGConfig(picture, &config);
-    printf("GetOptimalPNGConfig returned: %ld\n", result);
-    fflush(stdout);
     if (result != RETURN_OK) {
-        PutStr("Error: Cannot analyze image format\n");
+        PutStr("Error: Cannot determine PNG configuration\n");
         CloseIFFPicture(picture);
         FreeIFFPicture(picture);
         FreeArgs(rdargs);
@@ -167,9 +226,6 @@ int main(int argc, char **argv)
         IFFParseBase = NULL;
         return (int)RETURN_FAIL;
     }
-    
-    printf("About to output analysis information...\n");
-    fflush(stdout);
     
     /* Output analysis information */
     {
@@ -253,14 +309,14 @@ int main(int argc, char **argv)
         }
         
         printf("\n");
-        printf("Finished output section, about to call DecodeToRGB...\n");
-        fflush(stdout);
     }
     
     /* Write PNG file - args[1] is a STRPTR (pointer to string) from ReadArgs */
     result = PNGEncoder_Write((const char *)args[1], rgbData, &config, picture);
     if (result != RETURN_OK) {
-        PutStr("Error: Cannot write PNG file\n");
+        PutStr("Error: Cannot write PNG file: ");
+        PutStr((STRPTR)args[1]);
+        PutStr("\n");
         PNGEncoder_FreeConfig(&config); /* Free palette/trans if allocated */
         /* Note: rgbData points to picture->pixelData, which is freed by FreeIFFPicture() */
         CloseIFFPicture(picture);
@@ -270,6 +326,12 @@ int main(int argc, char **argv)
         IFFParseBase = NULL;
         return (int)RETURN_FAIL;
     }
+    
+    PutStr("Successfully converted ");
+    PutStr((STRPTR)args[0]);
+    PutStr(" to ");
+    PutStr((STRPTR)args[1]);
+    PutStr("\n");
     
     /* Cleanup */
     PNGEncoder_FreeConfig(&config); /* Free palette/trans if allocated */

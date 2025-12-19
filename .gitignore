@@ -1,0 +1,13 @@
+*.o
+*.debug
+*.map
+a.out
+*.gst
+*.gst.info
+*.uaem
+*.sym
+*.info
+*.debug
+output*.txt
+*.ld
+iffparse.doc

@@ -6,6 +6,7 @@
 */
 
 #include "main.h"
+#include "iffpicturelib/iffpicture_private.h"
 #include <proto/exec.h>
 #include <proto/dos.h>
 
@@ -163,7 +164,8 @@ LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData,
     
     /* Set palette if indexed color */
     if (config->color_type == PNG_COLOR_TYPE_PALETTE && config->palette && config->num_palette > 0) {
-        palette = (png_colorp)AllocMem(config->num_palette * sizeof(png_color), MEMF_CLEAR);
+        /* Use public memory (not chip RAM, we're not rendering to display) */
+        palette = (png_colorp)AllocMem(config->num_palette * sizeof(png_color), MEMF_PUBLIC | MEMF_CLEAR);
         if (!palette) {
             png_destroy_write_struct(&png_ptr, &info_ptr);
             Close(filehandle);
@@ -185,7 +187,7 @@ LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData,
     
     /* Set transparency if needed */
     if (config->trans && config->num_trans > 0) {
-        trans = (png_bytep)AllocMem(config->num_trans, MEMF_CLEAR);
+        trans = (png_bytep)AllocMem(config->num_trans, MEMF_PUBLIC | MEMF_CLEAR);
         if (!trans) {
             if (palette) {
                 FreeMem(palette, config->num_palette * sizeof(png_color));
@@ -211,67 +213,78 @@ LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData,
     
     /* Write image data row by row */
     if (config->color_type == PNG_COLOR_TYPE_PALETTE) {
-        /* For palette images, we need to convert RGB data to palette indices */
-        /* Allocate temporary buffer for palette indices */
+        /* For palette images, use original palette indices if available */
+        /* Otherwise convert RGB data to palette indices */
         UBYTE *paletteIndices;
         ULONG i, j;
         ULONG bestMatch;
         ULONG bestDist;
         ULONG dist;
+        BOOL useOriginalIndices = FALSE;
         
-        printf("PNGEncoder: Converting RGB to palette indices, palette has %lu entries\n", (ULONG)config->num_palette);
-        fflush(stdout);
-        
-        paletteIndices = (UBYTE *)AllocMem(width * height, MEMF_CLEAR);
-        if (!paletteIndices) {
-            if (palette) {
-                FreeMem(palette, config->num_palette * sizeof(png_color));
-            }
-            if (trans) {
-                FreeMem(trans, config->num_trans);
-            }
-            png_destroy_write_struct(&png_ptr, &info_ptr);
-            Close(filehandle);
-            return RETURN_FAIL;
-        }
-        
-        /* Convert RGB to palette indices by finding closest match */
-        {
-            UBYTE r, g, b;
-            ULONG rgbIndex;
-            LONG dr, dg, db;
-            
-            printf("PNGEncoder: Converting %lu pixels from RGB to palette indices\n", (ULONG)width * height);
+        /* Check if we have original palette indices (for indexed formats like ILBM) */
+        if (picture && picture->paletteIndices) {
+            paletteIndices = picture->paletteIndices;
+            useOriginalIndices = TRUE;
+            printf("PNGEncoder: Using original palette indices from decoded image\n");
+            fflush(stdout);
+        } else {
+            /* Need to convert RGB to palette indices */
+            printf("PNGEncoder: Converting RGB to palette indices, palette has %lu entries\n", (ULONG)config->num_palette);
             fflush(stdout);
             
-            for (i = 0; i < (ULONG)width * height; i++) {
-                rgbIndex = i * 3;
-                r = rgbData[rgbIndex];
-                g = rgbData[rgbIndex + 1];
-                b = rgbData[rgbIndex + 2];
-                
-                /* Find closest palette entry */
-                bestMatch = 0;
-                bestDist = 0xFFFFFFFFUL;
-                for (j = 0; j < (ULONG)config->num_palette; j++) {
-                    dr = (LONG)r - (LONG)palette[j].red;
-                    dg = (LONG)g - (LONG)palette[j].green;
-                    db = (LONG)b - (LONG)palette[j].blue;
-                    dist = (ULONG)(dr * dr + dg * dg + db * db);
-                    
-                    if (dist < bestDist) {
-                        bestDist = dist;
-                        bestMatch = j;
-                    }
+            /* Use public memory (not chip RAM, we're not rendering to display) */
+            paletteIndices = (UBYTE *)AllocMem(width * height, MEMF_PUBLIC | MEMF_CLEAR);
+            if (!paletteIndices) {
+                if (palette) {
+                    FreeMem(palette, config->num_palette * sizeof(png_color));
                 }
+                if (trans) {
+                    FreeMem(trans, config->num_trans);
+                }
+                png_destroy_write_struct(&png_ptr, &info_ptr);
+                Close(filehandle);
+                return RETURN_FAIL;
+            }
+            
+            /* Convert RGB to palette indices by finding closest match */
+            {
+                UBYTE r, g, b;
+                ULONG rgbIndex;
+                LONG dr, dg, db;
                 
-                paletteIndices[i] = (UBYTE)bestMatch;
+                printf("PNGEncoder: Converting %lu pixels from RGB to palette indices\n", (ULONG)width * height);
+                fflush(stdout);
                 
-                /* Debug first few pixels */
-                if (i < 10) {
-                    printf("PNGEncoder: Pixel %lu: RGB=(%d,%d,%d) -> palette index %lu (palette RGB=(%d,%d,%d))\n",
-                           i, r, g, b, bestMatch, palette[bestMatch].red, palette[bestMatch].green, palette[bestMatch].blue);
-                    fflush(stdout);
+                for (i = 0; i < (ULONG)width * height; i++) {
+                    rgbIndex = i * 3;
+                    r = rgbData[rgbIndex];
+                    g = rgbData[rgbIndex + 1];
+                    b = rgbData[rgbIndex + 2];
+                    
+                    /* Find closest palette entry */
+                    bestMatch = 0;
+                    bestDist = 0xFFFFFFFFUL;
+                    for (j = 0; j < (ULONG)config->num_palette; j++) {
+                        dr = (LONG)r - (LONG)palette[j].red;
+                        dg = (LONG)g - (LONG)palette[j].green;
+                        db = (LONG)b - (LONG)palette[j].blue;
+                        dist = (ULONG)(dr * dr + dg * dg + db * db);
+                        
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestMatch = j;
+                        }
+                    }
+                    
+                    paletteIndices[i] = (UBYTE)bestMatch;
+                    
+                    /* Debug first few pixels */
+                    if (i < 10) {
+                        printf("PNGEncoder: Pixel %lu: RGB=(%d,%d,%d) -> palette index %lu (palette RGB=(%d,%d,%d))\n",
+                               i, r, g, b, bestMatch, palette[bestMatch].red, palette[bestMatch].green, palette[bestMatch].blue);
+                        fflush(stdout);
+                    }
                 }
             }
         }
@@ -279,14 +292,35 @@ LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData,
         printf("PNGEncoder: Writing %lu rows of palette indices\n", (ULONG)height);
         fflush(stdout);
         
-        /* For 4-bit palette, we need to pack indices (2 per byte) */
-        if (config->bit_depth == 4) {
+        /* For bit depths < 8, we need to pack indices */
+        if (config->bit_depth < 8) {
             UBYTE *packedRow;
             ULONG packedRowSize;
             ULONG col;
+            ULONG pixelsPerByte;
+            ULONG shiftPerPixel;
             
-            packedRowSize = (width + 1) / 2; /* Round up for odd widths */
-            packedRow = (UBYTE *)AllocMem(packedRowSize, MEMF_CLEAR);
+            /* Calculate packing parameters */
+            if (config->bit_depth == 1) {
+                pixelsPerByte = 8;
+                shiftPerPixel = 7;
+                packedRowSize = (width + 7) / 8; /* Round up */
+            } else if (config->bit_depth == 2) {
+                pixelsPerByte = 4;
+                shiftPerPixel = 6;
+                packedRowSize = (width + 3) / 4; /* Round up */
+            } else if (config->bit_depth == 4) {
+                pixelsPerByte = 2;
+                shiftPerPixel = 4;
+                packedRowSize = (width + 1) / 2; /* Round up */
+            } else {
+                /* Should not happen, but fallback to 8-bit */
+                pixelsPerByte = 1;
+                shiftPerPixel = 0;
+                packedRowSize = width;
+            }
+            
+            packedRow = (UBYTE *)AllocMem(packedRowSize, MEMF_PUBLIC | MEMF_CLEAR);
             if (!packedRow) {
                 FreeMem(paletteIndices, width * height);
                 if (palette) {
@@ -300,18 +334,37 @@ LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData,
                 return RETURN_FAIL;
             }
             
-            /* Write palette indices row by row, packing for 4-bit */
+            /* Write palette indices row by row, packing according to bit depth */
             for (row = 0; row < height; row++) {
                 UBYTE *rowIndices = paletteIndices + (ULONG)row * width;
+                ULONG byteIndex;
+                ULONG bitPos;
                 
-                /* Pack 2 indices per byte */
-                for (col = 0; col < width; col += 2) {
-                    UBYTE byte;
-                    byte = (UBYTE)(rowIndices[col] << 4);
-                    if (col + 1 < width) {
-                        byte |= (rowIndices[col + 1] & 0x0F);
+                /* Clear packed row */
+                for (byteIndex = 0; byteIndex < packedRowSize; byteIndex++) {
+                    packedRow[byteIndex] = 0;
+                }
+                
+                /* Pack pixels into bytes - PNG expects MSB first */
+                for (col = 0; col < width; col++) {
+                    UBYTE pixelValue;
+                    ULONG pixelInByte;
+                    
+                    byteIndex = col / pixelsPerByte;
+                    pixelInByte = col % pixelsPerByte;
+                    pixelValue = (UBYTE)(rowIndices[col] & ((1 << config->bit_depth) - 1));
+                    
+                    /* Calculate bit position - MSB first */
+                    /* For 2-bit: pixel 0 at bits 6-7, pixel 1 at bits 4-5, etc. */
+                    bitPos = shiftPerPixel - (pixelInByte * (8 / pixelsPerByte));
+                    packedRow[byteIndex] |= (UBYTE)(pixelValue << bitPos);
+                    
+                    /* Debug first row packing */
+                    if (row == 0 && col < 8 && config->bit_depth == 2) {
+                        printf("PNGEncoder: Packing row %ld, col %ld: pixelValue=%d, byteIndex=%lu, bitPos=%lu, packedByte=0x%02x\n",
+                               row, col, pixelValue, byteIndex, bitPos, packedRow[byteIndex]);
+                        fflush(stdout);
                     }
-                    packedRow[col / 2] = byte;
                 }
                 
                 row_pointers[0] = packedRow;
@@ -320,22 +373,23 @@ LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData,
             
             FreeMem(packedRow, packedRowSize);
         } else {
-            /* 1-bit, 2-bit, or 8-bit - write directly */
-            /* Note: For 1-bit and 2-bit, libpng expects packed data too,
-             * but let's handle 4-bit first and see if that fixes it */
+            /* 8-bit - write directly (one index per byte) */
             for (row = 0; row < height; row++) {
                 row_pointers[0] = paletteIndices + (ULONG)row * width;
                 png_write_row(png_ptr, row_pointers[0]);
             }
         }
         
-        FreeMem(paletteIndices, width * height);
+        /* Only free if we allocated it (not using original indices) */
+        if (!useOriginalIndices) {
+            FreeMem(paletteIndices, width * height);
+        }
     } else if (config->color_type == PNG_COLOR_TYPE_GRAY) {
         /* For grayscale, convert RGB to grayscale */
         UBYTE *grayData;
         ULONG i;
         
-        grayData = (UBYTE *)AllocMem(width * height, MEMF_CLEAR);
+        grayData = (UBYTE *)AllocMem(width * height, MEMF_PUBLIC | MEMF_CLEAR);
         if (!grayData) {
             if (palette) {
                 FreeMem(palette, config->num_palette * sizeof(png_color));

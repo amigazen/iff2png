@@ -24,8 +24,8 @@ struct IFFPicture *AllocIFFPicture(VOID)
 {
     struct IFFPicture *picture;
     
-    /* Allocate memory for picture structure */
-    picture = (struct IFFPicture *)AllocMem(sizeof(struct IFFPicture), MEMF_CLEAR);
+    /* Allocate memory for picture structure - use public memory (not chip RAM) */
+    picture = (struct IFFPicture *)AllocMem(sizeof(struct IFFPicture), MEMF_PUBLIC | MEMF_CLEAR);
     if (!picture) {
         return NULL;
     }
@@ -97,6 +97,13 @@ VOID FreeIFFPicture(struct IFFPicture *picture)
         FreeMem(picture->pixelData, picture->pixelDataSize);
         picture->pixelData = NULL;
         picture->pixelDataSize = 0;
+    }
+    
+    /* Free palette indices */
+    if (picture->paletteIndices) {
+        FreeMem(picture->paletteIndices, picture->paletteIndicesSize);
+        picture->paletteIndices = NULL;
+        picture->paletteIndicesSize = 0;
     }
     
     /* Free picture structure */
@@ -482,8 +489,8 @@ LONG ReadBMHD(struct IFFPicture *picture)
         return RETURN_FAIL;
     }
     
-    /* Allocate BMHD structure */
-    bmhd = (struct BitMapHeader *)AllocMem(sizeof(struct BitMapHeader), MEMF_CLEAR);
+    /* Allocate BMHD structure - use public memory (not chip RAM) */
+    bmhd = (struct BitMapHeader *)AllocMem(sizeof(struct BitMapHeader), MEMF_PUBLIC | MEMF_CLEAR);
     if (!bmhd) {
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate BitMapHeader");
         return RETURN_FAIL;
@@ -576,15 +583,15 @@ LONG ReadCMAP(struct IFFPicture *picture)
         return RETURN_OK;
     }
     
-    /* Allocate ColorMap structure */
-    cmap = (struct ColorMap *)AllocMem(sizeof(struct ColorMap), MEMF_CLEAR);
+    /* Allocate ColorMap structure - use public memory (not chip RAM) */
+    cmap = (struct ColorMap *)AllocMem(sizeof(struct ColorMap), MEMF_PUBLIC | MEMF_CLEAR);
     if (!cmap) {
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate ColorMap");
         return RETURN_FAIL;
     }
     
-    /* Allocate color data */
-    data = (UBYTE *)AllocMem(sp->sp_Size, MEMF_CLEAR);
+    /* Allocate color data - use public memory (not chip RAM) */
+    data = (UBYTE *)AllocMem(sp->sp_Size, MEMF_PUBLIC | MEMF_CLEAR);
     if (!data) {
         FreeMem(cmap, sizeof(struct ColorMap));
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate ColorMap data");
@@ -754,9 +761,9 @@ LONG Decode(struct IFFPicture *picture)
         return RETURN_FAIL;
     }
     
-    /* Allocate RGB pixel buffer */
+    /* Allocate RGB pixel buffer - use public memory (not chip RAM, we're not rendering to display) */
     picture->pixelDataSize = (ULONG)picture->bmhd->w * picture->bmhd->h * 3;
-    picture->pixelData = (UBYTE *)AllocMem(picture->pixelDataSize, MEMF_CLEAR);
+    picture->pixelData = (UBYTE *)AllocMem(picture->pixelDataSize, MEMF_PUBLIC | MEMF_CLEAR);
     if (!picture->pixelData) {
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate pixel data buffer");
         return RETURN_FAIL;

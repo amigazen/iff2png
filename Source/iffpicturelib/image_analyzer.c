@@ -11,6 +11,10 @@
 #include <proto/exec.h>
 #include <proto/utility.h>
 
+/* Forward declarations for getter functions */
+UWORD GetWidth(struct IFFPicture *picture);
+UWORD GetHeight(struct IFFPicture *picture);
+
 /*
 ** AnalyzeFormat - Analyze image format and properties (implementation)
 ** Sets internal flags based on image characteristics
@@ -138,7 +142,8 @@ LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config)
             /* Allocate and copy palette */
             config->num_palette = numColors;
             DEBUG_PRINTF1("DEBUG: GetOptimalPNGConfig - Allocating palette with %ld entries\n", numColors);
-            config->palette = (struct PNGColor *)AllocMem(numColors * sizeof(struct PNGColor), MEMF_CLEAR);
+            /* Use public memory (not chip RAM, we're not rendering to display) */
+            config->palette = (struct PNGColor *)AllocMem(numColors * sizeof(struct PNGColor), MEMF_PUBLIC | MEMF_CLEAR);
             if (!config->palette) {
                 SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate PNG palette");
                 return RETURN_FAIL;
@@ -159,18 +164,55 @@ LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config)
         }
         
         /* Handle transparent color for indexed images */
-        if (picture->bmhd->masking == mskHasTransparentColor) {
-            config->num_trans = 1;
-            config->trans = (UBYTE *)AllocMem(sizeof(UBYTE), MEMF_CLEAR);
-            if (!config->trans) {
-                if (config->palette) {
-                    FreeMem(config->palette, config->num_palette * sizeof(struct PNGColor));
-                    config->palette = NULL;
+        /* Only set tRNS if the transparent color index is actually used in the image */
+        /* AND if the image has been decoded (so we can check usage) */
+        if (picture->bmhd->masking == mskHasTransparentColor && picture->paletteIndices) {
+            UBYTE transparentIndex;
+            ULONG pixelCount;
+            ULONG i;
+            BOOL transparentColorUsed = FALSE;
+            
+            transparentIndex = (UBYTE)picture->bmhd->transparentColor;
+            
+            /* Check if transparent color index is actually used in the image */
+            pixelCount = (ULONG)GetWidth(picture) * (ULONG)GetHeight(picture);
+            for (i = 0; i < pixelCount; i++) {
+                if (picture->paletteIndices[i] == transparentIndex) {
+                    transparentColorUsed = TRUE;
+                    break;
                 }
-                SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate PNG transparency");
-                return RETURN_FAIL;
             }
-            config->trans[0] = (UBYTE)picture->bmhd->transparentColor;
+            
+            /* Only set tRNS if the transparent color is actually used */
+            /* However, if the transparent color is black (index 0) and it's used,
+             * we skip tRNS to make black visible (many IFF files mark black as transparent
+             * but users expect black to be visible in PNG output) */
+            if (transparentColorUsed && transparentIndex != 0) {
+                config->num_trans = 1;
+                config->trans = (UBYTE *)AllocMem(sizeof(UBYTE), MEMF_PUBLIC | MEMF_CLEAR);
+                if (!config->trans) {
+                    if (config->palette) {
+                        FreeMem(config->palette, config->num_palette * sizeof(struct PNGColor));
+                        config->palette = NULL;
+                    }
+                    SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate PNG transparency");
+                    return RETURN_FAIL;
+                }
+                config->trans[0] = transparentIndex;
+                DEBUG_PRINTF1("DEBUG: GetOptimalPNGConfig - Transparent color index = %ld (used in image, setting tRNS)\n", 
+                             (ULONG)transparentIndex);
+            } else if (transparentColorUsed && transparentIndex == 0) {
+                DEBUG_PRINTF1("DEBUG: GetOptimalPNGConfig - Transparent color index = %ld (black, used in image, skipping tRNS to keep black visible)\n", 
+                             (ULONG)transparentIndex);
+            } else {
+                DEBUG_PRINTF1("DEBUG: GetOptimalPNGConfig - Transparent color index = %ld (not used in image, skipping tRNS)\n", 
+                             (ULONG)transparentIndex);
+            }
+        } else if (picture->bmhd->masking == mskHasTransparentColor) {
+            /* Image not decoded yet - don't set tRNS, we'll check after decoding */
+            /* This prevents setting tRNS for colors that aren't actually used */
+            DEBUG_PRINTF1("DEBUG: GetOptimalPNGConfig - Transparent color index = %ld (image not decoded yet, skipping tRNS)\n", 
+                         (ULONG)picture->bmhd->transparentColor);
         }
     } else {
         /* Non-indexed, non-true-color (e.g., 1-bit B/W without CMAP) */

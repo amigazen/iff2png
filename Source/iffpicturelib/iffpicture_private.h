@@ -63,6 +63,10 @@ struct IFFPicture {
     ULONG pixelDataSize;
     BOOL hasAlpha;
     
+    /* For indexed images: store original palette indices */
+    UBYTE *paletteIndices;
+    ULONG paletteIndicesSize;
+    
     /* Format analysis */
     BOOL isHAM;
     BOOL isEHB;

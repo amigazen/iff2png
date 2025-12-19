@@ -92,6 +92,7 @@ LONG DecodeILBM(struct IFFPicture *picture)
     UWORD rowBytes;
     UBYTE *planeBuffer;
     UBYTE *rgbOut;
+    UBYTE *paletteOut; /* For storing original palette indices */
     UWORD row, plane, col;
     UBYTE pixelIndex;
     LONG bytesRead;
@@ -117,6 +118,14 @@ LONG DecodeILBM(struct IFFPicture *picture)
     cmapData = picture->cmap->data;
     maxColors = picture->cmap->numcolors;
     
+    /* For indexed images, also store original palette indices */
+    picture->paletteIndicesSize = (ULONG)width * height;
+    picture->paletteIndices = (UBYTE *)AllocMem(picture->paletteIndicesSize, MEMF_PUBLIC | MEMF_CLEAR);
+    if (!picture->paletteIndices) {
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate palette indices buffer");
+        return RETURN_FAIL;
+    }
+    
     /* Allocate pixel data buffer */
     if (picture->bmhd->masking == mskHasMask) {
         picture->pixelDataSize = (ULONG)width * height * 4; /* RGBA */
@@ -126,14 +135,16 @@ LONG DecodeILBM(struct IFFPicture *picture)
         picture->hasAlpha = FALSE;
     }
     
-    picture->pixelData = (UBYTE *)AllocMem(picture->pixelDataSize, MEMF_CLEAR);
+    /* Use public memory (not chip RAM, we're not rendering to display) */
+    picture->pixelData = (UBYTE *)AllocMem(picture->pixelDataSize, MEMF_PUBLIC | MEMF_CLEAR);
     if (!picture->pixelData) {
+        FreeMem(picture->paletteIndices, picture->paletteIndicesSize);
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate pixel data buffer");
         return RETURN_FAIL;
     }
     
     /* Allocate buffer for one plane row */
-    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_CLEAR);
+    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_PUBLIC | MEMF_CLEAR);
     if (!planeBuffer) {
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate plane buffer");
         return RETURN_FAIL;
@@ -142,7 +153,7 @@ LONG DecodeILBM(struct IFFPicture *picture)
     /* Allocate alpha buffer if mask plane present */
     alphaValues = NULL;
     if (picture->bmhd->masking == mskHasMask) {
-        alphaValues = (UBYTE *)AllocMem(width, MEMF_CLEAR);
+        alphaValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
         if (!alphaValues) {
             FreeMem(planeBuffer, rowBytes);
             SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate alpha buffer");
@@ -151,11 +162,12 @@ LONG DecodeILBM(struct IFFPicture *picture)
     }
     
     rgbOut = picture->pixelData;
+    paletteOut = picture->paletteIndices;
     
     /* Process each row */
     for (row = 0; row < height; row++) {
         /* Clear pixel indices for this row */
-        UBYTE *pixelIndices = (UBYTE *)AllocMem(width, MEMF_CLEAR);
+        UBYTE *pixelIndices = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
         if (!pixelIndices) {
             FreeMem(planeBuffer, rowBytes);
             if (alphaValues) FreeMem(alphaValues, width);
@@ -230,14 +242,23 @@ LONG DecodeILBM(struct IFFPicture *picture)
             }
         }
         
-        /* Convert pixel indices to RGB using CMAP */
+        /* Convert pixel indices to RGB using CMAP and store original indices */
         for (col = 0; col < width; col++) {
             pixelIndex = pixelIndices[col];
+            
+            /* Debug first row and first few pixels */
+            if (row == 0 && col < 10) {
+                printf("DecodeILBM: Row %ld, Col %ld: pixelIndex=%d\n", row, col, pixelIndex);
+                fflush(stdout);
+            }
             
             /* Clamp to valid CMAP range */
             if (pixelIndex >= maxColors) {
                 pixelIndex = (UBYTE)(maxColors - 1);
             }
+            
+            /* Store original palette index */
+            *paletteOut++ = pixelIndex;
             
             /* Look up RGB from CMAP */
             rgbOut[0] = cmapData[pixelIndex * 3];     /* R */
@@ -335,7 +356,7 @@ LONG DecodeHAM(struct IFFPicture *picture)
     }
     
     /* Allocate buffer for one plane row */
-    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_CLEAR);
+    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_PUBLIC | MEMF_CLEAR);
     if (!planeBuffer) {
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate plane buffer");
         return RETURN_FAIL;
@@ -346,7 +367,7 @@ LONG DecodeHAM(struct IFFPicture *picture)
     /* Process each row */
     for (row = 0; row < height; row++) {
         /* Clear pixel values for this row */
-        UBYTE *pixelValues = (UBYTE *)AllocMem(width, MEMF_CLEAR);
+        UBYTE *pixelValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
         if (!pixelValues) {
             FreeMem(planeBuffer, rowBytes);
             SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate pixel values");
@@ -484,7 +505,7 @@ LONG DecodeEHB(struct IFFPicture *picture)
     }
     
     /* Allocate buffer for one plane row */
-    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_CLEAR);
+    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_PUBLIC | MEMF_CLEAR);
     if (!planeBuffer) {
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate plane buffer");
         return RETURN_FAIL;
@@ -495,7 +516,7 @@ LONG DecodeEHB(struct IFFPicture *picture)
     /* Process each row */
     for (row = 0; row < height; row++) {
         /* Clear pixel indices for this row */
-        UBYTE *pixelIndices = (UBYTE *)AllocMem(width, MEMF_CLEAR);
+        UBYTE *pixelIndices = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
         if (!pixelIndices) {
             FreeMem(planeBuffer, rowBytes);
             SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate pixel indices");
@@ -614,10 +635,10 @@ LONG DecodeDEEP(struct IFFPicture *picture)
     planesPerColor = depth / 3;
     
     /* Allocate buffers */
-    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_CLEAR);
-    rValues = (UBYTE *)AllocMem(width, MEMF_CLEAR);
-    gValues = (UBYTE *)AllocMem(width, MEMF_CLEAR);
-    bValues = (UBYTE *)AllocMem(width, MEMF_CLEAR);
+    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_PUBLIC | MEMF_CLEAR);
+    rValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+    gValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+    bValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
     
     if (!planeBuffer || !rValues || !gValues || !bValues) {
         if (planeBuffer) FreeMem(planeBuffer, rowBytes);
@@ -771,7 +792,7 @@ LONG DecodePBM(struct IFFPicture *picture)
     maxColors = picture->cmap->numcolors;
     
     /* Allocate buffer for one row */
-    rowBuffer = (UBYTE *)AllocMem(width, MEMF_CLEAR);
+    rowBuffer = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
     if (!rowBuffer) {
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate row buffer");
         return RETURN_FAIL;
@@ -867,10 +888,10 @@ LONG DecodeRGBN(struct IFFPicture *picture)
     }
     
     /* Allocate buffers */
-    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_CLEAR);
-    rValues = (UBYTE *)AllocMem(width, MEMF_CLEAR);
-    gValues = (UBYTE *)AllocMem(width, MEMF_CLEAR);
-    bValues = (UBYTE *)AllocMem(width, MEMF_CLEAR);
+    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_PUBLIC | MEMF_CLEAR);
+    rValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+    gValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+    bValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
     
     if (!planeBuffer || !rValues || !gValues || !bValues) {
         if (planeBuffer) FreeMem(planeBuffer, rowBytes);
@@ -1033,10 +1054,10 @@ LONG DecodeRGB8(struct IFFPicture *picture)
     }
     
     /* Allocate buffers */
-    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_CLEAR);
-    rValues = (UBYTE *)AllocMem(width, MEMF_CLEAR);
-    gValues = (UBYTE *)AllocMem(width, MEMF_CLEAR);
-    bValues = (UBYTE *)AllocMem(width, MEMF_CLEAR);
+    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_PUBLIC | MEMF_CLEAR);
+    rValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+    gValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+    bValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
     
     if (!planeBuffer || !rValues || !gValues || !bValues) {
         if (planeBuffer) FreeMem(planeBuffer, rowBytes);
@@ -1211,7 +1232,7 @@ LONG DecodeACBM(struct IFFPicture *picture)
     
     /* Allocate buffer to store all plane data (contiguous storage) */
     planeDataSize = (ULONG)depth * height * rowBytes;
-    planeData = (UBYTE *)AllocMem(planeDataSize, MEMF_CLEAR);
+    planeData = (UBYTE *)AllocMem(planeDataSize, MEMF_PUBLIC | MEMF_CLEAR);
     if (!planeData) {
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate plane data buffer");
         return RETURN_FAIL;
@@ -1232,7 +1253,7 @@ LONG DecodeACBM(struct IFFPicture *picture)
     }
     
     /* Allocate buffer for one plane row (for decoding) */
-    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_CLEAR);
+    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_PUBLIC | MEMF_CLEAR);
     if (!planeBuffer) {
         FreeMem(planeData, planeDataSize);
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate plane buffer");
@@ -1244,7 +1265,7 @@ LONG DecodeACBM(struct IFFPicture *picture)
     /* Process each row - extract interleaved plane data from contiguous storage */
     for (row = 0; row < height; row++) {
         /* Clear pixel indices for this row */
-        pixelIndices = (UBYTE *)AllocMem(width, MEMF_CLEAR);
+        pixelIndices = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
         if (!pixelIndices) {
             FreeMem(planeBuffer, rowBytes);
             FreeMem(planeData, planeDataSize);
