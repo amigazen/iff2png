@@ -1,0 +1,111 @@
+## SAS/C makefile for awebpng aweb plugin module
+
+# Compiler and flags
+# Define STDC so zlib.h OF() macro expands correctly for SAS/C
+CC=sc
+CFLAGS= DATA=NEAR CODE=NEAR PARAMETERS=REGISTERS NOSTACKCHECK \
+        STRUCTUREEQUIVALENCE OPTIMIZE NOICONS MAP NOVERSION \
+        UTILITYLIBRARY DEFINE=PNG_INTERNAL DEFINE=STDC DEFINE=PNG_NO_STDIO\
+        INCLUDEDIR=include: INCLUDEDIR=../zlib INCLUDEDIR=pnglib
+
+# Linker and flags
+LN=slink
+LDFLAGS= SD ND BATCH
+
+# Library tools
+AR=oml
+RM=delete quiet
+
+# PNG library object files (read and write support enabled)
+PNG_OBJS = pnglib/png.o pnglib/pngset.o pnglib/pngget.o pnglib/pngrutil.o \
+           pnglib/pngtrans.o pnglib/pngpread.o \
+           pnglib/pngread.o pnglib/pngerror.o \
+           pnglib/pngrtran.o pnglib/pngrio.o \
+           pnglib/pngmem.o \
+           pnglib/pngwutil.o pnglib/pngwrite.o pnglib/pngwtran.o pnglib/pngwio.o
+
+# Main plugin object files
+PLUGIN_OBJS = startup.o awebpng.o pngsource.o pngcopy.o
+
+# Default target
+all: libpng
+
+# Build libpng library target
+libpng: pnglib/libpng.lib
+
+# Build libpng library
+pnglib/libpng.lib: $(PNG_OBJS)
+   $(AR) pnglib/libpng.lib r $(PNG_OBJS)
+
+# PNG library object files
+pnglib/png.o: pnglib/png.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/png.c
+
+pnglib/pngset.o: pnglib/pngset.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngset.c
+
+pnglib/pngget.o: pnglib/pngget.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngget.c
+
+pnglib/pngrutil.o: pnglib/pngrutil.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngrutil.c
+
+pnglib/pngtrans.o: pnglib/pngtrans.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngtrans.c
+
+# PNG write support enabled
+pnglib/pngwutil.o: pnglib/pngwutil.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngwutil.c
+
+pnglib/pngwrite.o: pnglib/pngwrite.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngwrite.c
+
+pnglib/pngwtran.o: pnglib/pngwtran.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngwtran.c
+
+pnglib/pngwio.o: pnglib/pngwio.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngwio.c
+
+pnglib/pngpread.o: pnglib/pngpread.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngpread.c
+
+pnglib/pngread.o: pnglib/pngread.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngread.c
+
+pnglib/pngerror.o: pnglib/pngerror.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngerror.c
+
+pnglib/pngrtran.o: pnglib/pngrtran.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngrtran.c
+
+pnglib/pngrio.o: pnglib/pngrio.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngrio.c
+
+pnglib/pngmem.o: pnglib/pngmem.c pnglib/png.h pnglib/pngconf.h
+   $(CC) $(CFLAGS) pnglib/pngmem.c
+
+# Main plugin object files
+.c.o:
+   $(CC) $(CFLAGS) "$*.c"
+
+startup.o: startup.c pluginlib.h
+
+awebpng.o: awebpng.c pluginlib.h awebpng.h
+
+pngsource.o: pngsource.c pluginlib.h awebpng.h
+
+pngcopy.o: pngcopy.c pluginlib.h awebpng.h
+
+# Clean target - remove object files only
+clean:
+   $(RM) *.o pnglib/*.o
+
+# Cleanall target - remove everything
+cleanall: clean
+   $(RM) pnglib/libpng.lib awebpng.awebplugin
+
+# Install target (if needed)
+install: awebpng.awebplugin
+   - copy clone awebpng.awebplugin TO //Internet/AWeb/awebplugin/awebpng.awebplugin
+   - copy clone awebpng.awebrx TO //Internet/AWeb/Docs/awebpng.awebrx
+   - copy clone awebpng.html TO //Internet/AWeb/Docs/awebpng.html

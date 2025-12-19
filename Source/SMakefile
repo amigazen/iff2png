@@ -1,0 +1,80 @@
+######################################################################
+# SMakefile for iff2png
+# Build with SAS/C compiler
+######################################################################
+
+TARGET = iff2png
+LIBTARGET = iffpicture.lib
+ZLIBTARGET = zlib/z.lib
+PNGLIBTARGET = libpng/pnglib/libpng.lib
+
+# Main program objects
+MAIN_OBJS = main.o png_encoder.o
+
+# Library objects
+LIB_OBJS = iffpicturelib/iffpicture.o iffpicturelib/image_decoder.o \
+           iffpicturelib/image_analyzer.o iffpicturelib/utils.o
+
+# Uncomment the next line to enable debug output:
+# DEBUG_FLAG = DEFINE=DEBUG
+
+CFLAGS = DATA=NEAR CODE=NEAR PARAMETERS=REGISTERS NOSTACKCHECK \
+         STRUCTUREEQUIVALENCE OPTIMIZE NOICONS MAP NOVERSION \
+         UTILITYLIBRARY INCLUDEDIR=include: \
+         INCLUDEDIR=iffpicturelib \
+         INCLUDEDIR=libpng INCLUDEDIR=libpng/pnglib \
+         INCLUDEDIR=zlib $(DEBUG_FLAG)
+
+LIBS = sc:lib/sc.lib LIB:amiga.lib sc:lib/scmieee.lib $(ZLIBTARGET) $(PNGLIBTARGET)
+
+all: $(ZLIBTARGET) $(PNGLIBTARGET) $(LIBTARGET) $(TARGET)
+
+# Build zlib first
+$(ZLIBTARGET):
+	@echo "Building zlib..."
+	@cd zlib && smake -f smakefile
+
+# Build libpng (depends on zlib)
+$(PNGLIBTARGET): $(ZLIBTARGET)
+	@echo "Building libpng..."
+	@cd libpng && smake -f smakefile libpng
+
+# Build iffpicture library
+$(LIBTARGET): $(LIB_OBJS)
+	oml $(LIBTARGET) r $(LIB_OBJS)
+	@echo "IFFPicture library built successfully"
+
+# Build main program
+$(TARGET): $(MAIN_OBJS) $(LIBTARGET)
+	slink FROM sc:lib/c.o $(MAIN_OBJS) LIB $(LIBS) $(LIBTARGET) \
+	      TO $(TARGET).ld STRIPDEBUG
+	slink FROM $(TARGET).ld TO $(TARGET) STRIPDEBUG NODEBUG
+	@protect $(TARGET) add p quiet
+
+# Compile main program sources
+main.o: main.c main.h
+	sc $(CFLAGS) OBJNAME=$@ main.c
+
+png_encoder.o: png_encoder.c png_encoder.h main.h
+	sc $(CFLAGS) OBJNAME=$@ png_encoder.c
+
+# Compile library sources
+iffpicturelib/iffpicture.o: iffpicturelib/iffpicture.c iffpicturelib/iffpicture.h iffpicturelib/iffpicture_private.h
+	sc $(CFLAGS) OBJNAME=$@ iffpicturelib/iffpicture.c
+
+iffpicturelib/image_decoder.o: iffpicturelib/image_decoder.c iffpicturelib/iffpicture_private.h
+	sc $(CFLAGS) OBJNAME=$@ iffpicturelib/image_decoder.c
+
+iffpicturelib/image_analyzer.o: iffpicturelib/image_analyzer.c iffpicturelib/iffpicture_private.h
+	sc $(CFLAGS) OBJNAME=$@ iffpicturelib/image_analyzer.c
+
+iffpicturelib/utils.o: iffpicturelib/utils.c iffpicturelib/iffpicture_private.h
+	sc $(CFLAGS) OBJNAME=$@ iffpicturelib/utils.c
+
+clean:
+	-delete $(MAIN_OBJS) $(LIB_OBJS) $(TARGET) $(TARGET).ld $(LIBTARGET)
+	@cd zlib && smake -f smakefile clean
+	@cd libpng && smake -f smakefile clean
+
+.PHONY: all clean
+

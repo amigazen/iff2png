@@ -1,0 +1,40 @@
+# zlib smakefile for iff2png
+# Compiles zlib compression library components
+
+# Define Z_SOLO to exclude gzip file I/O (we only need core compression/decompression)
+CFLAGS = DATA=NEAR CODE=NEAR PARAMETERS=REGISTERS NOSTACKCHECK \
+         STRUCTUREEQUIVALENCE OPTIMIZE NOICONS MAP NOVERSION \
+         UTILITYLIBRARY INCLUDEDIR=include:
+
+.c.o:
+   @echo "        Compiling zlib $*..."
+   @sc $(CFLAGS) $*.c
+
+# Core zlib objects needed for gzip decompression
+all: z.lib adler32.o crc32.o deflate.o inflate.o inftrees.o inffast.o trees.o zutil.o
+
+z.lib: adler32.o crc32.o deflate.o inflate.o inftrees.o inffast.o trees.o zutil.o
+   @oml z.lib r adler32.o crc32.o deflate.o inflate.o inftrees.o inffast.o trees.o zutil.o
+
+# Individual object dependencies
+adler32.o: adler32.c zlib.h zconf.h
+
+crc32.o: crc32.c zlib.h zconf.h crc32.h
+
+deflate.o: deflate.c zlib.h zconf.h deflate.h
+
+inflate.o: inflate.c zlib.h zconf.h inflate.h inftrees.h inffixed.h
+
+inftrees.o: inftrees.c zlib.h zconf.h inftrees.h
+
+inffast.o: inffast.c zlib.h zconf.h inffast.h
+
+trees.o: trees.c zlib.h zconf.h trees.h
+
+zutil.o: zutil.c zlib.h zconf.h zutil.h
+
+# Clean target
+clean:
+   @echo "        Cleaning zlib objects..."
+   @delete >nil: *.o
+   @delete >nil: test_integration
