@@ -134,7 +134,6 @@ static LONG ConvertRGBToBitPlanes(struct IFFPicture *picture, struct BitMap *bit
             /* Write pixel to bitplanes */
             /* Calculate bit position (MSB first) */
             bitMask = (UBYTE)(0x80 >> (col & 7));
-            planePtr = (UBYTE *)((ULONG)bitmap->Planes[0] + (ULONG)row * rowBytes + (col >> 3));
             
             for (plane = 0; plane < depth; plane++) {
                 if (bitmap->Planes[plane]) {

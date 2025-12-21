@@ -7,8 +7,10 @@
 
 #include "main.h"
 #include "iffpicturelib/iffpicture_private.h"
+#include "iffpicturelib/iffpicture.h"  /* For ReadCopyright, ReadAuthor */
 #include <proto/exec.h>
 #include <proto/dos.h>
+#include <png.h>  /* For png_text, png_set_text */
 
 /*
 ** PNG write callback for AmigaOS file I/O
@@ -76,7 +78,7 @@ VOID PNGEncoder_FreeConfig(struct PNGConfig *config)
 ** Uses libpng with custom AmigaOS file I/O callbacks
 */
 LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData, 
-                      struct PNGConfig *config, struct IFFPicture *picture)
+                      struct PNGConfig *config, struct IFFPicture *picture, BOOL stripMetadata)
 {
     BPTR filehandle;
     png_structp png_ptr;
@@ -89,29 +91,18 @@ LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData,
     LONG result;
     struct BitMapHeader *bmhd;
     
-    printf("PNGEncoder_Write: Starting, filename=%s\n", filename);
-    fflush(stdout);
-    
     if (!filename || !rgbData || !config || !picture) {
-        printf("PNGEncoder_Write: Invalid parameters\n");
-        fflush(stdout);
         return RETURN_FAIL;
     }
     
     bmhd = GetBMHD(picture);
     if (!bmhd) {
-        printf("PNGEncoder_Write: No BMHD\n");
-        fflush(stdout);
         return RETURN_FAIL;
     }
     
     width = bmhd->w;
     height = bmhd->h;
     
-    printf("PNGEncoder_Write: Image size %lux%lu, color_type=%d, bit_depth=%d, num_palette=%lu\n",
-           (ULONG)width, (ULONG)height, config->color_type, config->bit_depth, (ULONG)config->num_palette);
-    fflush(stdout);
-    result = RETURN_FAIL;
     png_ptr = NULL;
     info_ptr = NULL;
     palette = NULL;
@@ -208,6 +199,40 @@ LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData,
         png_set_tRNS(png_ptr, info_ptr, trans, config->num_trans, NULL);
     }
     
+    /* Add metadata from IFF to PNG (unless stripped) */
+    if (!stripMetadata && picture) {
+        png_text text_chunks[2];
+        ULONG num_text = 0;
+        STRPTR copyright;
+        STRPTR author;
+        
+        copyright = ReadCopyright(picture);
+        author = ReadAuthor(picture);
+        
+        /* Add Copyright metadata */
+        if (copyright) {
+            text_chunks[num_text].compression = PNG_TEXT_COMPRESSION_NONE; /* tEXt, none */
+            text_chunks[num_text].key = "Copyright";
+            text_chunks[num_text].text = copyright;
+            text_chunks[num_text].text_length = 0; /* libpng will calculate */
+            num_text++;
+        }
+        
+        /* Add Author metadata */
+        if (author) {
+            text_chunks[num_text].compression = PNG_TEXT_COMPRESSION_NONE; /* tEXt, none */
+            text_chunks[num_text].key = "Author";
+            text_chunks[num_text].text = author;
+            text_chunks[num_text].text_length = 0; /* libpng will calculate */
+            num_text++;
+        }
+        
+        /* Set text chunks if we have any */
+        if (num_text > 0) {
+            png_set_text(png_ptr, info_ptr, text_chunks, num_text);
+        }
+    }
+    
     /* Write PNG header */
     png_write_info(png_ptr, info_ptr);
     
@@ -226,12 +251,8 @@ LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData,
         if (picture && picture->paletteIndices) {
             paletteIndices = picture->paletteIndices;
             useOriginalIndices = TRUE;
-            printf("PNGEncoder: Using original palette indices from decoded image\n");
-            fflush(stdout);
         } else {
             /* Need to convert RGB to palette indices */
-            printf("PNGEncoder: Converting RGB to palette indices, palette has %lu entries\n", (ULONG)config->num_palette);
-            fflush(stdout);
             
             /* Use public memory (not chip RAM, we're not rendering to display) */
             paletteIndices = (UBYTE *)AllocMem(width * height, MEMF_PUBLIC | MEMF_CLEAR);
@@ -252,9 +273,6 @@ LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData,
                 UBYTE r, g, b;
                 ULONG rgbIndex;
                 LONG dr, dg, db;
-                
-                printf("PNGEncoder: Converting %lu pixels from RGB to palette indices\n", (ULONG)width * height);
-                fflush(stdout);
                 
                 for (i = 0; i < (ULONG)width * height; i++) {
                     rgbIndex = i * 3;
@@ -289,8 +307,6 @@ LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData,
             }
         }
         
-        printf("PNGEncoder: Writing %lu rows of palette indices\n", (ULONG)height);
-        fflush(stdout);
         
         /* For bit depths < 8, we need to pack indices */
         if (config->bit_depth < 8) {

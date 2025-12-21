@@ -31,7 +31,7 @@ struct PNGConfig {
 
 /* Function prototypes */
 LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData, 
-                      struct PNGConfig *config, struct IFFPicture *picture);
+                      struct PNGConfig *config, struct IFFPicture *picture, BOOL stripMetadata);
 VOID PNGEncoder_FreeConfig(struct PNGConfig *config);
 
 #endif /* PNG_ENCODER_H */

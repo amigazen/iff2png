@@ -532,6 +532,18 @@ ULONG GetVPModes(struct IFFPicture *picture)
     return picture->viewportmodes;
 }
 
+/*
+** GetFAXXCompression - Get FAXX compression type
+** Returns: Compression type (0=None, 1=MH, 2=MR, 4=MMR) or 0 if not FAXX
+*/
+UBYTE GetFAXXCompression(struct IFFPicture *picture)
+{
+    if (!picture) {
+        return 0;
+    }
+    return picture->faxxCompression;
+}
+
 struct BitMapHeader *GetBMHD(struct IFFPicture *picture)
 {
     if (!picture) {

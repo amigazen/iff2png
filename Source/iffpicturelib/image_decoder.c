@@ -38,16 +38,7 @@ static const UBYTE bit_mask[] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80}
 
 #define DECODE_OPCODE_BITS 4
 
-/* Opcode lookup table for MR decoding (from netpbm/faxtables.txt) */
-/* Format: Upper 4 bits = length in bits, lower 12 bits = opcode value */
-static const UWORD opcodetable[48] = {
-    16, 0x4ffb, 0x3ffa, 0x3ffa, 0x3ff5, 0x3ff5, 0x3ff7, 0x3ff7, /* OP_P, OP_H, OP_H, OP_VL1, OP_VL1, OP_VR1, OP_VR1 */
-    0x1ff6, 0x1ff6, 0x1ff6, 0x1ff6, 0x1ff6, 0x1ff6, 0x1ff6, 0x1ff6, /* OP_V */
-    32, (UWORD)-1, 0x7ff2, 0x7ff2, 0x7ff3, 0x7ff3, 0x7ff9, 0x7ff9, /* OP_EXT, OP_EXT, OP_VL3, OP_VL3, OP_VL3, OP_VR3 */
-    0x6ff4, 0x6ff4, 0x6ff4, 0x6ff4, 0x6ff8, 0x6ff8, 0x6ff8, 0x6ff8, /* OP_VL2, OP_VR2 */
-    (UWORD)-1, 0xcffe, 0xbffc, (UWORD)-1, (UWORD)-1, (UWORD)-1, (UWORD)-1, (UWORD)-1, /* EOL, SEOL */
-    (UWORD)-1, (UWORD)-1, (UWORD)-1, (UWORD)-1, (UWORD)-1, (UWORD)-1, (UWORD)-1, (UWORD)-1
-};
+/* Opcode lookup table removed - not used in current implementation */
 
 /* Bitstream reader for FAXX compressed data */
 typedef struct {
@@ -99,27 +90,6 @@ static LONG ReadFaxBit(FaxBitstream *bs)
         bs->bitPos++;
         return bit;
     }
-}
-
-/*
-** ReadFaxBits - Read multiple bits from FAXX compressed stream
-** Returns: Value or -1 on error
-*/
-static LONG ReadFaxBits(FaxBitstream *bs, ULONG numBits)
-{
-    LONG value;
-    LONG bit;
-    ULONG i;
-    
-    value = 0;
-    for (i = 0; i < numBits; i++) {
-        bit = ReadFaxBit(bs);
-        if (bit < 0) {
-            return -1;
-        }
-        value = (value << 1) | bit;
-    }
-    return value;
 }
 
 /*
@@ -474,8 +444,6 @@ static LONG DecodeMROpcode(FaxBitstream *bs)
     LONG code;
     LONG bit;
     
-    code = 0;
-    
     /* Read first bit */
     bit = ReadFaxBit(bs);
     if (bit < 0) return -1;
@@ -536,45 +504,6 @@ static LONG DecodeMROpcode(FaxBitstream *bs)
 }
 
 /*
-** BuildChangingElements - Convert pixel line to array of run end positions
-** Returns: Number of positions stored (including sentinel width+1)
-*/
-static UWORD BuildChangingElements(UBYTE *line, UWORD width, UWORD *positions)
-{
-    UWORD pos;
-    UWORD count;
-    UBYTE currentColor;
-    UBYTE startColor;
-    
-    count = 0;
-    if (width == 0) {
-        positions[count++] = width + 1;
-        return count;
-    }
-    
-    startColor = line[0];
-    
-    /* If line starts with black, first white run is 0-length */
-    if (startColor == 1) {
-        positions[count++] = 0;
-    }
-    
-    /* Find run end positions */
-    currentColor = startColor;
-    for (pos = 1; pos < width; pos++) {
-        if (line[pos] != currentColor) {
-            /* Color changed at position pos - this is where current run ends */
-            positions[count++] = pos;
-            currentColor = line[pos];
-        }
-    }
-    
-    /* Add sentinel */
-    positions[count++] = width + 1;
-    return count;
-}
-
-/*
 ** DecodeMRLine - Decode a single line using Modified READ (2D)
 ** Returns: RETURN_OK on success, RETURN_FAIL on error
 ** 
@@ -589,11 +518,11 @@ static LONG DecodeMRLine(FaxBitstream *bs, UBYTE *output, UBYTE *refLine, UWORD 
 {
     UWORD *curline;   /* Changing element positions on current line */
     UWORD *curpos;    /* Pointer to current position in curline */
+    UWORD curposIndex; /* Index into curline array */
     UWORD a0;         /* Current decoding position */
     BOOL isWhite;     /* Current color (TRUE=white, FALSE=black) */
     LONG opcode;
     LONG runLength;
-    UWORD i;
     UWORD maxPositions;
     
     /* Allocate array for changing element positions on current line */
@@ -607,6 +536,7 @@ static LONG DecodeMRLine(FaxBitstream *bs, UBYTE *output, UBYTE *refLine, UWORD 
     a0 = 0;
     isWhite = TRUE; /* Lines start with white */
     curpos = curline;
+    curposIndex = 0;
     
     /* Helper function to find b1 and b2 on reference line */
     /* b1: first changing element to the right of a0 with OPPOSITE color to isWhite */
@@ -654,7 +584,7 @@ static LONG DecodeMRLine(FaxBitstream *bs, UBYTE *output, UBYTE *refLine, UWORD 
             }
             a0 += runLength;
             if (a0 > width) a0 = width;
-            *curpos++ = a0;
+            curline[curposIndex++] = a0;
             isWhite = !isWhite;
             
             runLength = DecodeMHRun(bs, isWhite);
@@ -664,14 +594,14 @@ static LONG DecodeMRLine(FaxBitstream *bs, UBYTE *output, UBYTE *refLine, UWORD 
             }
             a0 += runLength;
             if (a0 > width) a0 = width;
-            *curpos++ = a0;
+            curline[curposIndex++] = a0;
             isWhite = !isWhite;
         } else if ((opcode >= OP_VL3) && (opcode <= OP_VR3)) {
             /* Vertical modes: a0 = b1 + (opcode - OP_V) */
             if (b1 >= width) {
                 /* No b1 available - fill rest with current color and break */
                 while (a0 < width) {
-                    *curpos++ = width;
+                    curline[curposIndex++] = width;
                     a0 = width;
                 }
                 break;
@@ -684,7 +614,7 @@ static LONG DecodeMRLine(FaxBitstream *bs, UBYTE *output, UBYTE *refLine, UWORD 
                 /* Underflow - shouldn't happen, but handle gracefully */
                 a0 = 0;
             }
-            *curpos++ = a0;
+            curline[curposIndex++] = a0;
             isWhite = !isWhite;
         } else {
             /* Unknown opcode */
@@ -694,7 +624,7 @@ static LONG DecodeMRLine(FaxBitstream *bs, UBYTE *output, UBYTE *refLine, UWORD 
     } while (a0 < width);
     
     /* Add sentinel */
-    *curpos++ = width + 1;
+    curline[curposIndex] = width + 1;
     
     /* Convert changing element positions to pixel data */
     {
@@ -816,9 +746,6 @@ LONG DecodeILBM(struct IFFPicture *picture)
     width = picture->bmhd->w;
     height = picture->bmhd->h;
     depth = picture->bmhd->nPlanes;
-    
-    printf("DecodeILBM: Starting decode %ldx%ld, %ld planes\n", width, height, depth);
-    fflush(stdout);
     
     DEBUG_PRINTF4("DEBUG: DecodeILBM - Starting decode: %ldx%ld, %ld planes, masking=%ld\n",
                   width, height, depth, picture->bmhd->masking);
@@ -954,12 +881,6 @@ LONG DecodeILBM(struct IFFPicture *picture)
         for (col = 0; col < width; col++) {
             pixelIndex = pixelIndices[col];
             
-            /* Debug first row and first few pixels */
-            if (row == 0 && col < 10) {
-                printf("DecodeILBM: Row %ld, Col %ld: pixelIndex=%d\n", row, col, pixelIndex);
-                fflush(stdout);
-            }
-            
             /* Clamp to valid CMAP range */
             if (pixelIndex >= maxColors) {
                 pixelIndex = (UBYTE)(maxColors - 1);
@@ -992,16 +913,11 @@ LONG DecodeILBM(struct IFFPicture *picture)
         FreeMem(pixelIndices, width);
     }
     
-    printf("DecodeILBM: Completed all rows\n");
-    fflush(stdout);
-    
     FreeMem(planeBuffer, rowBytes);
     if (alphaValues) {
         FreeMem(alphaValues, width);
     }
     
-    printf("DecodeILBM: Returning OK\n");
-    fflush(stdout);
     return RETURN_OK;
 }
 
@@ -2256,10 +2172,6 @@ LONG DecodeFAXX(struct IFFPicture *picture)
         FaxBitstream bs;
         UBYTE *lineBuffer;
         UBYTE *refLine;
-        UWORD a0, a1, a2, b1, b2;
-        UWORD pos;
-        BOOL isWhite;
-        LONG bit;
         
         InitFaxBitstream(&bs, picture->iff);
         
@@ -2308,6 +2220,8 @@ LONG DecodeFAXX(struct IFFPicture *picture)
         
         /* Decode remaining lines using MR (2D) */
         for (row = 1; row < height; row++) {
+            LONG bit;  /* Tag bit for line encoding type */
+            
             /* Skip EOL */
             if (SkipToEOL(&bs) < 0) {
                 /* End of data - pad remaining rows with white */

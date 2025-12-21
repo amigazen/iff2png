@@ -25,7 +25,7 @@ struct IFFPicture;      /* Opaque structure - use accessor functions */
 struct BitMapHeader;    /* Public structure defined below */
 struct IFFColorMap;      /* Public structure defined below (renamed from ColorMap to avoid conflict with graphics/view.h) */
 struct PNGConfig;        /* Defined in png_encoder.h from libpng */
-struct IFFHandle;        /* Defined in libraries/iffparse.h */
+/* Note: struct IFFHandle is defined in libraries/iffparse.h - include that header if needed */
 
 /*****************************************************************************/
 
@@ -287,6 +287,7 @@ UWORD GetHeight(struct IFFPicture *picture);
 UWORD GetDepth(struct IFFPicture *picture);
 ULONG GetFormType(struct IFFPicture *picture);
 ULONG GetVPModes(struct IFFPicture *picture);
+UBYTE GetFAXXCompression(struct IFFPicture *picture);  /* Returns FAXX compression type (0=None, 1=MH, 2=MR, 4=MMR) */
 struct BitMapHeader *GetBMHD(struct IFFPicture *picture);
 struct IFFColorMap *GetIFFColorMap(struct IFFPicture *picture);
 UBYTE *GetPixelData(struct IFFPicture *picture);
@@ -456,22 +457,24 @@ struct BitMapHeader {
     UWORD w, h;             /* raster width & height in pixels */
     WORD x, y;              /* pixel position for this image (usually 0,0) */
     UBYTE nPlanes;          /* # source bitplanes (1-8 for standard images) */
-    UBYTE masking;          /* masking technique:
-                             *   0 = none
-                             *   1 = has mask plane
-                             *   2 = transparent color
-                             *   3 = lasso (not commonly used) */
+    UBYTE masking;          /* masking technique (use msk* constants below) */
     UBYTE compression;      /* compression algorithm:
                              *   0 = none
                              *   1 = ByteRun1 (RLE) */
     UBYTE pad1;             /* unused; ignore on read, write as 0 */
     UWORD transparentColor; /* transparent "color number" (palette index)
-                             *   only valid if masking == 2 */
+                             *   only valid if masking == mskHasTransparentColor */
     UBYTE xAspect, yAspect; /* pixel aspect ratio (width : height)
                              *   typically 10:11 for standard Amiga displays */
     WORD pageWidth, pageHeight; /* source "page" size in pixels
                                  *   usually matches w, h but may be larger */
 };
+
+/* Masking type constants for BitMapHeader.masking field */
+#define mskNone                 0  /* No masking */
+#define mskHasMask              1  /* Has separate mask plane */
+#define mskHasTransparentColor  2  /* Uses transparentColor palette index */
+#define mskLasso                3  /* Lasso masking (not commonly used) */
 
 /*****************************************************************************/
 

@@ -26,9 +26,6 @@
 /* libpng header - pnglib directory is in INCLUDEDIR */
 #include <png.h>
 
-/* stdio for printf debug output */
-#include <stdio.h>
-
 /* IFFPicture library public interface */
 #include "iffpicturelib/iffpicture.h"
 

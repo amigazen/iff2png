@@ -8,20 +8,22 @@
 #include "main.h"
 #include "debug.h"
 
-static const char *verstag = "$VER: iff2png 1.2 (21.12.2025)";
-
+/* Amiga version strings - kept as static to prevent "unreachable" warnings */
+/* These are referenced by the linker/loader, not by code */
+static const char *verstag = "$VER: iff2png 1.3 (21.12.2025)";
 static const char *stack_cookie = "$STACK: 4096";
 
 /* Command-line template - two required positional file arguments and optional FORCE, QUIET, and OPAQUE switches */
-static const char TEMPLATE[] = "SOURCE/A,TARGET/A,FORCE/S,QUIET/S,OPAQUE/S";
+static const char TEMPLATE[] = "SOURCE/A,TARGET/A,FORCE/S,QUIET/S,OPAQUE/S,STRIP=NOMETADATA/S";
 
 /* Usage string */
-static const char USAGE[] = "Usage: iff2png SOURCE/A TARGET/A [FORCE/S] [QUIET/S] [OPAQUE/S]\n"
+static const char USAGE[] = "Usage: iff2png SOURCE/A TARGET/A [FORCE/S] [QUIET/S] [OPAQUE/S] [STRIP=NOMETADATA/S]\n"
                              "  SOURCE/A - Input IFF image file\n"
                              "  TARGET/A - Output PNG file\n"
                              "  FORCE/S - Overwrite existing output file\n"
                              "  QUIET/S - Suppress normal output messages\n"
-                             "  OPAQUE/S - Keep color 0 opaque instead of transparent\n";
+                             "  OPAQUE/S - Keep color 0 opaque instead of transparent\n"
+                             "  STRIP/S or NOMETADATA/S - Prevents any metadata text from the source being included in the target PNG\n";
 
 /* Library base - needed for proto includes */
 struct Library *IFFParseBase;
@@ -33,7 +35,7 @@ struct Library *IFFParseBase;
 int main(int argc, char **argv)
 {
     struct RDArgs *rdargs;
-    LONG args[5]; /* SOURCE, TARGET, FORCE, QUIET, OPAQUE */
+    LONG args[6]; /* SOURCE, TARGET, FORCE, QUIET, OPAQUE, STRIP */
     char sourceFile[256]; /* Local copy of source filename */
     char targetFile[256]; /* Local copy of target filename */
     struct IFFPicture *picture;
@@ -44,8 +46,13 @@ int main(int argc, char **argv)
     BOOL forceOverwrite;
     BOOL quiet;
     BOOL opaque;
+    BOOL stripMetadata;
     BPTR lock;
+    BPTR targetLock;
     struct FileInfoBlock fib;
+    ULONG sourceFileSize;
+    ULONG targetFileSize;
+    UBYTE outputBuffer[512];  /* Buffer for formatted output strings */
     
     /* Initialize config structure to zero */
     config.color_type = 0;
@@ -69,9 +76,10 @@ int main(int argc, char **argv)
     args[2] = 0; /* FORCE (boolean) */
     args[3] = 0; /* QUIET (boolean) */
     args[4] = 0; /* OPAQUE (boolean) */
+    args[5] = 0; /* STRIP (boolean) */
     
     /* Parse command-line arguments */
-    /* Template "SOURCE/A,TARGET/A,FORCE/S,QUIET/S,OPAQUE/S" - two required files and optional switches */
+    /* Template "SOURCE/A,TARGET/A,FORCE/S,QUIET/S,OPAQUE/S,STRIP/S" - two required files and optional switches */
     rdargs = ReadArgs((STRPTR)TEMPLATE, args, NULL);
     if (!rdargs) {
         /* ReadArgs returns NULL on failure (e.g., missing required /A arguments) */
@@ -104,10 +112,10 @@ int main(int argc, char **argv)
     forceOverwrite = (args[2] != 0);
     quiet = (args[3] != 0);
     opaque = (args[4] != 0);
+    stripMetadata = (args[5] != 0);
     
     /* Free ReadArgs memory now that we've copied the strings we need */
     FreeArgs(rdargs);
-    rdargs = NULL;
     
     /* Check if input file exists */
     lock = Lock((STRPTR)sourceFile, ACCESS_READ);
@@ -120,7 +128,8 @@ int main(int argc, char **argv)
         return (int)RETURN_FAIL;
     }
     
-    /* Check if it's actually a file (not a directory) */
+    /* Check if it's actually a file (not a directory) and get file size */
+    sourceFileSize = 0;
     if (Examine(lock, &fib)) {
         if (fib.fib_DirEntryType > 0) {
             /* It's a directory, not a file */
@@ -132,6 +141,7 @@ int main(int argc, char **argv)
             IFFParseBase = NULL;
             return (int)RETURN_FAIL;
         }
+        sourceFileSize = fib.fib_Size;
     }
     UnLock(lock);
     
@@ -288,16 +298,31 @@ int main(int argc, char **argv)
         Close(filehandle); /* User must close file handle after CloseIFFPicture() */
     }
     
-    /* Output analysis information (unless quiet) */
+    /* Output header and analysis information (unless quiet) */
     if (!quiet) {
+        /* All variable declarations must be at the start of the block (C89 requirement) */
         struct BitMapHeader *bmhd;
         ULONG formType;
         const char *formName;
         const char *colorTypeName;
         const char *bitDepthName;
+        ULONG width, height, depth;
+        STRPTR compressionName;
+        STRPTR maskingName;
+        
+        /* Print header with source/target names and libpng version */
+        SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), 
+                 "iff2png %s %s\n", sourceFile, targetFile);
+        PutStr((STRPTR)outputBuffer);
+        SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), 
+                 "Using libpng version %s\n\n", PNG_LIBPNG_VER_STRING);
+        PutStr((STRPTR)outputBuffer);
         
         bmhd = GetBMHD(picture);
         formType = GetFormType(picture);
+        width = GetWidth(picture);
+        height = GetHeight(picture);
+        depth = GetDepth(picture);
         
         /* Determine form type name */
         switch (formType) {
@@ -331,10 +356,77 @@ int main(int argc, char **argv)
             default: bitDepthName = "Unknown"; break;
         }
         
-        printf("Source file analysis:\n");
-        printf("  Format: %s\n", formName);
-        printf("  Dimensions: %lu x %lu\n", (ULONG)GetWidth(picture), (ULONG)GetHeight(picture));
-        printf("  Planes/Depth: %lu\n", (ULONG)GetDepth(picture));
+        /* Determine compression name */
+        if (formType == ID_FAXX) {
+            /* FAXX format has its own compression types */
+            switch (GetFAXXCompression(picture)) {
+                case 0: compressionName = "None"; break;
+                case 1: compressionName = "Modified Huffman (MH)"; break;
+                case 2: compressionName = "Modified READ (MR)"; break;
+                case 4: compressionName = "Modified Modified READ (MMR)"; break;
+                default: compressionName = "Unknown"; break;
+            }
+        } else if (IsCompressed(picture)) {
+            compressionName = "ByteRun1";
+        } else {
+            compressionName = "None";
+        }
+        
+        /* Determine masking name */
+        switch (bmhd->masking) {
+            case mskNone: maskingName = "None"; break;
+            case mskHasMask: maskingName = "Mask plane"; break;
+            case mskHasTransparentColor: maskingName = "Transparent color"; break;
+            case mskLasso: maskingName = "Lasso"; break;
+            default: maskingName = "Unknown"; break;
+        }
+        
+        /* Output IFF source information */
+        PutStr("IFF Source:\n");
+        SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  Format: %s\n", formName);
+        PutStr((STRPTR)outputBuffer);
+        
+        /* File size */
+        {
+            LONG len;
+            LONG newLen;
+            len = SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  File size: %lu bytes", sourceFileSize);
+            if (sourceFileSize >= 1024) {
+                /* SNPrintf returns length including null, write at len-1 to overwrite null */
+                newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1,
+                                  " (%lu KB", sourceFileSize / 1024);
+                len = (len - 1) + newLen;
+                if (sourceFileSize >= 1024 * 1024) {
+                    newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1,
+                                      ", %lu MB", sourceFileSize / (1024 * 1024));
+                    len = (len - 1) + newLen;
+                }
+                newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1, ")");
+                len = (len - 1) + newLen;
+            }
+            newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1, "\n");
+            len = (len - 1) + newLen;
+            PutStr((STRPTR)outputBuffer);
+        }
+        
+        /* Dimensions */
+        SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  Dimensions: %lu x %lu pixels\n", width, height);
+        PutStr((STRPTR)outputBuffer);
+        
+        SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  Bit planes: %lu\n", depth);
+        PutStr((STRPTR)outputBuffer);
+        
+        if (bmhd->pageWidth != width || bmhd->pageHeight != height) {
+            SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  Page size: %ld x %ld pixels\n", 
+                     (LONG)bmhd->pageWidth, (LONG)bmhd->pageHeight);
+            PutStr((STRPTR)outputBuffer);
+        }
+        
+        if (bmhd->xAspect != 0 && bmhd->yAspect != 0) {
+            SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  Aspect ratio: %lu:%lu\n", 
+                     (ULONG)bmhd->xAspect, (ULONG)bmhd->yAspect);
+            PutStr((STRPTR)outputBuffer);
+        }
         
         if (IsHAM(picture)) {
             PutStr("  Mode: HAM (Hold And Modify)\n");
@@ -342,39 +434,49 @@ int main(int argc, char **argv)
             PutStr("  Mode: EHB (Extra Half-Brite)\n");
         }
         
-        if (IsCompressed(picture)) {
-            PutStr("  Compression: ByteRun1\n");
-        } else {
-            PutStr("  Compression: None\n");
+        SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  Compression: %s\n", compressionName);
+        PutStr((STRPTR)outputBuffer);
+        
+        SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  Masking: %s\n", maskingName);
+        PutStr((STRPTR)outputBuffer);
+        
+        if (bmhd->masking == mskHasTransparentColor) {
+            SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  Transparent color index: %lu\n", 
+                     (ULONG)bmhd->transparentColor);
+            PutStr((STRPTR)outputBuffer);
         }
         
-        if (HasAlpha(picture)) {
-            PutStr("  Alpha channel: Yes\n");
-        } else {
-            PutStr("  Alpha channel: No\n");
-        }
+        /* Output PNG target information */
+        PutStr("\nPNG Target:\n");
+        SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  Color type: %s\n", colorTypeName);
+        PutStr((STRPTR)outputBuffer);
         
-        printf("\nPNG output configuration:\n");
-        printf("  Color type: %s\n", colorTypeName);
-        printf("  Bit depth: %s\n", bitDepthName);
+        SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  Bit depth: %s\n", bitDepthName);
+        PutStr((STRPTR)outputBuffer);
         
         if (config.color_type == PNG_COLOR_TYPE_PALETTE && config.num_palette > 0) {
-            printf("  Palette entries: %lu\n", (ULONG)config.num_palette);
+            SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  Palette entries: %lu\n", (ULONG)config.num_palette);
+            PutStr((STRPTR)outputBuffer);
         }
         
         if (config.trans && config.num_trans > 0) {
-            printf("  Transparency: Yes (%lu entries)\n", (ULONG)config.num_trans);
+            SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), "  Transparency: %lu palette entries\n", (ULONG)config.num_trans);
+            PutStr((STRPTR)outputBuffer);
         } else if (config.has_alpha) {
-            printf("  Transparency: Yes (alpha channel)\n");
+            PutStr("  Transparency: Alpha channel\n");
         } else {
-            printf("  Transparency: No\n");
+            PutStr("  Transparency: None\n");
         }
         
-        printf("\n");
+        PutStr("  Compression: Deflate (zlib)\n");
+        PutStr("  Filter: Adaptive\n");
+        PutStr("  Interlacing: None\n");
+        
+        PutStr("\n");
     }
     
     /* Write PNG file - use local copy of filename */
-    result = PNGEncoder_Write((const char *)targetFile, rgbData, &config, picture);
+    result = PNGEncoder_Write((const char *)targetFile, rgbData, &config, picture, stripMetadata);
     if (result != RETURN_OK) {
         PutStr("Error: Cannot write PNG file: ");
         PutStr((STRPTR)targetFile);
@@ -389,11 +491,71 @@ int main(int argc, char **argv)
     }
     
     if (!quiet) {
-        PutStr("Successfully converted ");
-        PutStr((STRPTR)sourceFile);
-        PutStr(" to ");
-        PutStr((STRPTR)targetFile);
-        PutStr("\n");
+        /* Get target file size */
+        targetFileSize = 0;
+        targetLock = Lock((STRPTR)targetFile, ACCESS_READ);
+        if (targetLock) {
+            if (Examine(targetLock, &fib)) {
+                targetFileSize = fib.fib_Size;
+            }
+            UnLock(targetLock);
+        }
+        
+        PutStr("Conversion complete");
+        
+        if (targetFileSize > 0) {
+            LONG len;
+            ULONG ratio;
+            
+            /* Build source file size string */
+            LONG newLen;
+            len = SNPrintf((STRPTR)outputBuffer, sizeof(outputBuffer), 
+                          "  Source: %lu bytes", sourceFileSize);
+            if (sourceFileSize >= 1024) {
+                /* SNPrintf returns length including null, write at len-1 to overwrite null */
+                newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1,
+                                  " (%lu KB", sourceFileSize / 1024);
+                len = (len - 1) + newLen;
+                if (sourceFileSize >= 1024 * 1024) {
+                    newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1,
+                                      ", %lu MB", sourceFileSize / (1024 * 1024));
+                    len = (len - 1) + newLen;
+                }
+                newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1, ")");
+                len = (len - 1) + newLen;
+            }
+            
+            /* Append target file size to same buffer */
+            newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1,
+                              " -> Target: %lu bytes", targetFileSize);
+            len = (len - 1) + newLen;
+            if (targetFileSize >= 1024) {
+                newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1,
+                                  " (%lu KB", targetFileSize / 1024);
+                len = (len - 1) + newLen;
+                if (targetFileSize >= 1024 * 1024) {
+                    newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1,
+                                      ", %lu MB", targetFileSize / (1024 * 1024));
+                    len = (len - 1) + newLen;
+                }
+                newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1, ")");
+                len = (len - 1) + newLen;
+            }
+            
+            /* Append ratio */
+            if (sourceFileSize > 0) {
+                ratio = (targetFileSize * 100) / sourceFileSize;
+                newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1,
+                                  " (ratio: %lu%%)\n", ratio);
+                len = (len - 1) + newLen;
+            } else {
+                newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1, "\n");
+                len = (len - 1) + newLen;
+            }
+            
+            /* Output the complete string */
+            PutStr((STRPTR)outputBuffer);
+        }
     }
     
     /* Cleanup - following iffparse.library pattern */
