@@ -538,11 +538,6 @@ static LONG DecodeMROpcode(FaxBitstream *bs)
 /*
 ** BuildChangingElements - Convert pixel line to array of run end positions
 ** Returns: Number of positions stored (including sentinel width+1)
-** 
-** The positions array stores where each run ENDS (like curline in example).
-** MR lines always start with white, so:
-** - If line starts with white: positions[0] = end of first white run
-** - If line starts with black: positions[0] = 0 (0-length white run), positions[1] = end of first black run
 */
 static UWORD BuildChangingElements(UBYTE *line, UWORD width, UWORD *positions)
 {
@@ -584,9 +579,6 @@ static UWORD BuildChangingElements(UBYTE *line, UWORD width, UWORD *positions)
 ** Returns: RETURN_OK on success, RETURN_FAIL on error
 ** 
 ** MR uses 2D compression with opcodes that reference the previous line.
-** Algorithm based on netpbm/faxtables.txt example code.
-** Works with changing element positions like the example, then converts to pixels.
-** 
 ** - OP_P (Pass): Skip b2 on reference line (a0 = b2)
 ** - OP_H (Horizontal): Two runs (white then black), store positions
 ** - OP_V (Vertical): a0 = b1, color changes
@@ -705,12 +697,6 @@ static LONG DecodeMRLine(FaxBitstream *bs, UBYTE *output, UBYTE *refLine, UWORD 
     *curpos++ = width + 1;
     
     /* Convert changing element positions to pixel data */
-    /* Algorithm matches rle_decode from example:
-     * - MR lines always start with white (isWhite = TRUE)
-     * - Positions array contains where each run ENDS
-     * - First position is where first white run ends
-     * - Then alternates: black run, white run, etc.
-     */
     {
         UWORD pos;
         UBYTE currentColor;

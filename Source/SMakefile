@@ -76,5 +76,7 @@ clean:
 	@cd zlib && smake -f smakefile clean
 	@cd libpng && smake -f smakefile clean
 
-.PHONY: all clean
-
+install:
+	-copy iff2png /SDK/C/iff2png CLONE
+	-copy iffpicture.lib /SDK/lib/iffpicture.lib CLONE
+	-copy iffpicturelib/iffpicture.h /SDK/Include_h/iffpicture.h CLONE
