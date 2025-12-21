@@ -15,6 +15,15 @@
 /* Library base is defined in main.c */
 extern struct Library *IFFParseBase;
 
+/* Forward declarations for internal functions */
+LONG ReadBMHD(struct IFFPicture *picture);
+LONG ReadCMAP(struct IFFPicture *picture);
+LONG ReadCAMG(struct IFFPicture *picture);
+LONG ReadBODY(struct IFFPicture *picture);
+LONG ReadABIT(struct IFFPicture *picture);
+LONG ReadFXHD(struct IFFPicture *picture);
+LONG ReadPAGE(struct IFFPicture *picture);
+
 /*
 ** AllocIFFPicture - Allocate a new IFFPicture object
 ** Returns: Pointer to new object or NULL on failure
@@ -44,13 +53,13 @@ struct IFFPicture *AllocIFFPicture(VOID)
     picture->isIndexed = FALSE;
     picture->isGrayscale = FALSE;
     picture->iff = NULL;
-    picture->filehandle = 0;
     picture->lastError = IFFPICTURE_OK;
     picture->errorString[0] = '\0';
     picture->isLoaded = FALSE;
     picture->isDecoded = FALSE;
     picture->bodyChunkSize = 0;
     picture->bodyChunkPosition = 0;
+    picture->faxxCompression = 0;
     
     return picture;
 }
@@ -71,11 +80,9 @@ VOID FreeIFFPicture(struct IFFPicture *picture)
         CloseIFFPicture(picture);
     }
     
-    /* Close file handle if open */
-    if (picture->filehandle) {
-        Close(picture->filehandle);
-        picture->filehandle = 0;
-    }
+    /* Note: File handle management is the caller's responsibility, following
+     * iffparse.library pattern. The caller must close the file handle with Close()
+     * after calling CloseIFFPicture(). */
     
     /* Free bitmap header */
     if (picture->bmhd) {
@@ -129,85 +136,27 @@ VOID SetIFFPictureError(struct IFFPicture *picture, LONG error, const char *mess
 }
 
 /*
-** OpenIFFPicture - Open IFF file from filename or open IFF context
-** Returns: RETURN_OK on success, RETURN_FAIL on error
-** Follows iffparse.library pattern: OpenIFF
-** If filename is NULL, opens the already-initialized IFF context
-*/
-LONG OpenIFFPicture(struct IFFPicture *picture, const char *filename)
-{
-    BPTR filehandle = (BPTR)NULL;
-    LONG error;
-    
-    if (!picture) {
-        return RETURN_FAIL;
-    }
-    
-    /* If filename provided, open file and initialize as DOS */
-    if (filename) {
-        printf("Opening file handle for: %s\n", filename);
-        fflush(stdout);
-        filehandle = Open((STRPTR)filename, MODE_OLDFILE);
-        if (!filehandle) {
-            printf("Open() failed\n");
-            fflush(stdout);
-            SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Cannot open file");
-            return RETURN_FAIL;
-        }
-        printf("File opened successfully, handle: %ld\n", (ULONG)filehandle);
-        fflush(stdout);
-        
-        /* Initialize IFFPicture as DOS stream */
-        printf("Calling InitIFFPictureasDOS...\n");
-        fflush(stdout);
-        InitIFFPictureasDOS(picture, filehandle);
-        printf("InitIFFPictureasDOS completed, iff=%p\n", picture->iff);
-        fflush(stdout);
-    }
-    
-    /* Ensure IFF handle is allocated */
-    if (!picture->iff) {
-        printf("ERROR: IFF handle is NULL after InitIFFPictureasDOS\n");
-        fflush(stdout);
-        SetIFFPictureError(picture, IFFPICTURE_INVALID, "IFFPicture not initialized");
-        if (filename) {
-            Close(filehandle);
-        }
-        return RETURN_FAIL;
-    }
-    
-    /* Open IFF for reading */
-    printf("Calling OpenIFF...\n");
-    fflush(stdout);
-    error = OpenIFF(picture->iff, IFFF_READ);
-    printf("OpenIFF returned: %ld\n", error);
-    fflush(stdout);
-    if (error) {
-        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Cannot open IFF file");
-        if (filename) {
-            Close(filehandle);
-        }
-        return RETURN_FAIL;
-    }
-    
-    picture->isLoaded = TRUE;
-    return RETURN_OK;
-}
-
-/*
 ** InitIFFPictureasDOS - Initialize IFFPicture as DOS stream
 ** Follows iffparse.library pattern: InitIFFasDOS
+** 
+** Initializes the IFFPicture to operate on DOS streams.
+** The iff_Stream field must be set by the caller after calling Open()
+** to get a BPTR file handle.
+** 
+** Example usage:
+**   picture = AllocIFFPicture();
+**   filehandle = Open("file.iff", MODE_OLDFILE);
+**   InitIFFPictureasDOS(picture);
+**   picture->iff->iff_Stream = (ULONG)filehandle;
+**   OpenIFFPicture(picture, IFFF_READ);
 */
-VOID InitIFFPictureasDOS(struct IFFPicture *picture, BPTR filehandle)
+VOID InitIFFPictureasDOS(struct IFFPicture *picture)
 {
     struct IFFHandle *iff;
     
-    if (!picture || !filehandle) {
+    if (!picture) {
         return;
     }
-    
-    /* Store file handle */
-    picture->filehandle = filehandle;
     
     /* Allocate IFF handle */
     iff = AllocIFF();
@@ -218,11 +167,50 @@ VOID InitIFFPictureasDOS(struct IFFPicture *picture, BPTR filehandle)
     
     picture->iff = iff;
     
-    /* Set stream BEFORE InitIFFasDOS (as per examples) */
-    iff->iff_Stream = (ULONG)filehandle;
-    
     /* Initialize IFF as DOS stream */
+    /* Note: iff_Stream must be set by caller after calling Open() */
     InitIFFasDOS(iff);
+}
+
+/*
+** OpenIFFPicture - Prepare IFFPicture to read or write a new IFF stream
+** Returns: RETURN_OK on success, RETURN_FAIL on error
+** Follows iffparse.library pattern: OpenIFF
+** 
+** The IFFPicture must have been initialized with InitIFFPictureasDOS()
+** and iff_Stream must be set to a valid BPTR file handle.
+** 
+** rwMode: IFFF_READ or IFFF_WRITE
+*/
+LONG OpenIFFPicture(struct IFFPicture *picture, LONG rwMode)
+{
+    LONG error;
+    
+    if (!picture) {
+        return RETURN_FAIL;
+    }
+    
+    /* Ensure IFF handle is allocated and initialized */
+    if (!picture->iff) {
+        SetIFFPictureError(picture, IFFPICTURE_INVALID, "IFFPicture not initialized - call InitIFFPictureasDOS() first");
+        return RETURN_FAIL;
+    }
+    
+    /* Ensure stream is set */
+    if (!picture->iff->iff_Stream) {
+        SetIFFPictureError(picture, IFFPICTURE_INVALID, "IFF stream not set - set iff_Stream to file handle after Open()");
+        return RETURN_FAIL;
+    }
+    
+    /* Open IFF for reading or writing */
+    error = OpenIFF(picture->iff, rwMode);
+    if (error) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Cannot open IFF stream");
+        return RETURN_FAIL;
+    }
+    
+    picture->isLoaded = TRUE;
+    return RETURN_OK;
 }
 
 /*
@@ -280,7 +268,18 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
     DEBUG_PRINTF1("DEBUG: ParseIFFPicture - FORM type = 0x%08lx\n", formType);
     
     /* Set up property chunks based on form type */
-    if (formType == ID_ILBM || formType == ID_PBM) {
+    if (formType == ID_FAXX) {
+        /* FAXX uses FXHD and PAGE chunks */
+        if ((error = PropChunk(picture->iff, formType, ID_FXHD)) != 0) {
+            SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set PropChunk for FXHD");
+            return RETURN_FAIL;
+        }
+        PropChunk(picture->iff, formType, ID_FLOG); /* Optional */
+        if ((error = StopChunk(picture->iff, formType, ID_PAGE)) != 0) {
+            SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set StopChunk for PAGE");
+            return RETURN_FAIL;
+        }
+    } else if (formType == ID_ILBM || formType == ID_PBM) {
         /* Common chunks for ILBM, PBM */
         if ((error = PropChunk(picture->iff, formType, ID_BMHD)) != 0) {
             SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set PropChunk for BMHD");
@@ -320,28 +319,98 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
         return RETURN_FAIL;
     }
     
-    /* Parse the file until we hit the BODY chunk */
+    /* Parse the file until we hit the data chunk */
     error = ParseIFF(picture->iff, IFFPARSE_SCAN);
     if (error != 0 && error != IFFERR_EOC) {
         SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to parse IFF file");
         return RETURN_FAIL;
     }
     
-    /* Extract stored property chunks */
-    if (ReadBMHD(picture) != RETURN_OK) {
-        return RETURN_FAIL; /* Error already set */
-    }
-    ReadCMAP(picture); /* CMAP is optional, don't fail if missing */
-    ReadCAMG(picture); /* CAMG is optional, don't fail if missing */
-    
-    /* Read BODY or ABIT chunk depending on format */
-    if (formType == ID_ACBM) {
-        if (ReadABIT(picture) != RETURN_OK) {
+    /* Extract stored property chunks based on format */
+    if (formType == ID_FAXX) {
+        /* FAXX uses FXHD and PAGE */
+        if (ReadFXHD(picture) != RETURN_OK) {
+            return RETURN_FAIL; /* Error already set */
+        }
+        /* Create default black/white CMAP for FAXX if not already present */
+        if (!picture->cmap) {
+            struct ColorMap *cmap;
+            UBYTE *data;
+            
+            /* Allocate ColorMap structure - use public memory (not chip RAM) */
+            cmap = (struct ColorMap *)AllocMem(sizeof(struct ColorMap), MEMF_PUBLIC | MEMF_CLEAR);
+            if (!cmap) {
+                /* Clean up BMHD allocated by ReadFXHD */
+                if (picture->bmhd) {
+                    FreeMem(picture->bmhd, sizeof(struct BitMapHeader));
+                    picture->bmhd = NULL;
+                }
+                SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate default ColorMap for FAXX");
+                return RETURN_FAIL;
+            }
+            
+            /* Allocate 2-color palette (black and white) - 6 bytes */
+            data = (UBYTE *)AllocMem(6, MEMF_PUBLIC | MEMF_CLEAR);
+            if (!data) {
+                FreeMem(cmap, sizeof(struct ColorMap));
+                /* Clean up BMHD allocated by ReadFXHD */
+                if (picture->bmhd) {
+                    FreeMem(picture->bmhd, sizeof(struct BitMapHeader));
+                    picture->bmhd = NULL;
+                }
+                SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate default ColorMap data for FAXX");
+                return RETURN_FAIL;
+            }
+            
+            /* Create black (index 0) and white (index 1) palette */
+            data[0] = 0;   /* Black R */
+            data[1] = 0;   /* Black G */
+            data[2] = 0;   /* Black B */
+            data[3] = 255; /* White R */
+            data[4] = 255; /* White G */
+            data[5] = 255; /* White B */
+            
+            cmap->data = data;
+            cmap->numcolors = 2;
+            cmap->is4Bit = FALSE;
+            
+            picture->cmap = cmap;
+            picture->isIndexed = TRUE;
+            
+            DEBUG_PUTSTR("DEBUG: ReadCMAP - Created default black/white CMAP for FAXX\n");
+        }
+        if (ReadPAGE(picture) != RETURN_OK) {
+            /* Clean up on error */
+            if (picture->cmap) {
+                if (picture->cmap->data) {
+                    FreeMem(picture->cmap->data, picture->cmap->numcolors * 3);
+                }
+                FreeMem(picture->cmap, sizeof(struct ColorMap));
+                picture->cmap = NULL;
+            }
+            if (picture->bmhd) {
+                FreeMem(picture->bmhd, sizeof(struct BitMapHeader));
+                picture->bmhd = NULL;
+            }
             return RETURN_FAIL; /* Error already set */
         }
     } else {
-        if (ReadBODY(picture) != RETURN_OK) {
+        /* ILBM, PBM, RGBN, RGB8, DEEP, ACBM use BMHD */
+        if (ReadBMHD(picture) != RETURN_OK) {
             return RETURN_FAIL; /* Error already set */
+        }
+        ReadCMAP(picture); /* CMAP is optional, don't fail if missing */
+        ReadCAMG(picture); /* CAMG is optional, don't fail if missing */
+        
+        /* Read BODY or ABIT chunk depending on format */
+        if (formType == ID_ACBM) {
+            if (ReadABIT(picture) != RETURN_OK) {
+                return RETURN_FAIL; /* Error already set */
+            }
+        } else {
+            if (ReadBODY(picture) != RETURN_OK) {
+                return RETURN_FAIL; /* Error already set */
+            }
         }
     }
     
@@ -353,6 +422,19 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
 ** Getter functions - return values from picture structure
 ** Following iffparse.library pattern: Get* functions
 */
+/*
+** GetIFFHandle - Get the IFFHandle pointer for direct access
+** Returns: Pointer to IFFHandle or NULL
+** Follows iffparse.library pattern - allows user to set iff_Stream
+*/
+struct IFFHandle *GetIFFHandle(struct IFFPicture *picture)
+{
+    if (!picture) {
+        return NULL;
+    }
+    return picture->iff;
+}
+
 UWORD GetWidth(struct IFFPicture *picture)
 {
     if (!picture || !picture->bmhd) {
@@ -747,6 +829,136 @@ LONG ReadABIT(struct IFFPicture *picture)
 }
 
 /*
+** ReadFXHD - Read FXHD chunk and convert to BMHD structure (for FAXX)
+** Returns: RETURN_OK on success, RETURN_FAIL on error
+** Follows iffparse.library pattern: FindProp
+**
+** FAXX uses FXHD (FaxHeader) instead of BMHD (BitmapHeader)
+** We convert FXHD to BMHD structure for compatibility with rest of code
+*/
+LONG ReadFXHD(struct IFFPicture *picture)
+{
+    struct StoredProperty *sp;
+    struct BitMapHeader *bmhd;
+    UBYTE *src;
+    UWORD width, height;
+    UBYTE compression;
+    
+    if (!picture || !picture->iff) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid picture or IFF handle");
+        }
+        return RETURN_FAIL;
+    }
+    
+    /* Find stored FXHD property */
+    sp = FindProp(picture->iff, picture->formtype, ID_FXHD);
+    if (!sp) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "FAXX file missing required FXHD chunk");
+        return RETURN_FAIL;
+    }
+    
+    /* FXHD should be at least 8 bytes (Width, Height, LineLength, VRes, Compression) */
+    if (sp->sp_Size < 8) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "FXHD chunk too small");
+        return RETURN_FAIL;
+    }
+    
+    DEBUG_PRINTF1("DEBUG: ReadFXHD - Found FXHD property, size=%ld\n", sp->sp_Size);
+    
+    /* Free existing BMHD if present (shouldn't happen, but be safe) */
+    if (picture->bmhd) {
+        FreeMem(picture->bmhd, sizeof(struct BitMapHeader));
+        picture->bmhd = NULL;
+    }
+    
+    /* Allocate BMHD structure - use public memory (not chip RAM) */
+    bmhd = (struct BitMapHeader *)AllocMem(sizeof(struct BitMapHeader), MEMF_PUBLIC | MEMF_CLEAR);
+    if (!bmhd) {
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate BitMapHeader");
+        return RETURN_FAIL;
+    }
+    
+    /* Read FXHD data byte-by-byte (big-endian) */
+    src = (UBYTE *)sp->sp_Data;
+    
+    /* Read Width and Height (UWORD, big-endian, 2 bytes each) */
+    width = (UWORD)((src[0] << 8) | src[1]);
+    height = (UWORD)((src[2] << 8) | src[3]);
+    
+    /* Read Compression (UBYTE at offset 7) */
+    compression = src[7];
+    
+    /* Convert FXHD to BMHD structure */
+    bmhd->w = width;
+    bmhd->h = height;
+    bmhd->x = 0;
+    bmhd->y = 0;
+    bmhd->nPlanes = 1; /* FAXX is always 1-bit (black and white) */
+    bmhd->masking = 0; /* No masking for FAXX */
+    
+    /* Map FAXX compression to BMHD compression */
+    /* FAXX: FXCMPNONE=0, FXCMPMH=1, FXCMPMR=2, FXCMPMMR=4 */
+    /* BMHD: cmpNone=0, cmpByteRun1=1 */
+    /* For now, treat all FAXX compression as special (we'll handle in decoder) */
+    bmhd->compression = (compression == 0) ? cmpNone : cmpByteRun1;
+    
+    bmhd->pad1 = 0;
+    bmhd->transparentColor = 0;
+    bmhd->xAspect = 1;
+    bmhd->yAspect = 1;
+    bmhd->pageWidth = width;
+    bmhd->pageHeight = height;
+    
+    picture->bmhd = bmhd;
+    
+    /* Store FAXX compression type for decoder */
+    picture->isCompressed = (compression != 0);
+    picture->faxxCompression = compression;
+    
+    DEBUG_PRINTF3("DEBUG: ReadFXHD - Width=%ld Height=%ld Compression=%ld\n",
+                 (ULONG)width, (ULONG)height, (ULONG)compression);
+    
+    return RETURN_OK;
+}
+
+/*
+** ReadPAGE - Read PAGE chunk position and size (for FAXX)
+** Returns: RETURN_OK on success, RETURN_FAIL on error
+** Follows iffparse.library pattern: CurrentChunk
+*/
+LONG ReadPAGE(struct IFFPicture *picture)
+{
+    struct ContextNode *cn;
+    
+    if (!picture || !picture->iff) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid picture or IFF handle");
+        }
+        return RETURN_FAIL;
+    }
+    
+    /* Get current chunk - should be PAGE after ParseIFF stops */
+    cn = CurrentChunk(picture->iff);
+    if (!cn) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "No current chunk (PAGE not found)");
+        return RETURN_FAIL;
+    }
+    
+    /* Verify it's the PAGE chunk */
+    if (cn->cn_ID != ID_PAGE || cn->cn_Type != picture->formtype) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Current chunk is not PAGE");
+        return RETURN_FAIL;
+    }
+    
+    /* Store PAGE chunk information for later reading */
+    picture->bodyChunkSize = cn->cn_Size;
+    picture->bodyChunkPosition = 0; /* We're positioned at start of PAGE chunk */
+    
+    return RETURN_OK;
+}
+
+/*
 ** Decode - Decode image data to RGB
 ** Returns: RETURN_OK on success, RETURN_FAIL on error
 */
@@ -782,6 +994,9 @@ LONG Decode(struct IFFPicture *picture)
             break;
         case ID_PBM:
             result = DecodePBM(picture);
+            break;
+        case ID_FAXX:
+            result = DecodeFAXX(picture);
             break;
         case ID_RGBN:
             result = DecodeRGBN(picture);

@@ -188,16 +188,16 @@ LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config)
              * we skip tRNS to make black visible (many IFF files mark black as transparent
              * but users expect black to be visible in PNG output) */
             if (transparentColorUsed && transparentIndex != 0) {
-                config->num_trans = 1;
+            config->num_trans = 1;
                 config->trans = (UBYTE *)AllocMem(sizeof(UBYTE), MEMF_PUBLIC | MEMF_CLEAR);
-                if (!config->trans) {
-                    if (config->palette) {
-                        FreeMem(config->palette, config->num_palette * sizeof(struct PNGColor));
-                        config->palette = NULL;
-                    }
-                    SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate PNG transparency");
-                    return RETURN_FAIL;
+            if (!config->trans) {
+                if (config->palette) {
+                    FreeMem(config->palette, config->num_palette * sizeof(struct PNGColor));
+                    config->palette = NULL;
                 }
+                SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate PNG transparency");
+                return RETURN_FAIL;
+            }
                 config->trans[0] = transparentIndex;
                 DEBUG_PRINTF1("DEBUG: GetOptimalPNGConfig - Transparent color index = %ld (used in image, setting tRNS)\n", 
                              (ULONG)transparentIndex);

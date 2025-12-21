@@ -22,8 +22,8 @@ struct IFFPicture *AllocIFFPicture(VOID);
 VOID FreeIFFPicture(struct IFFPicture *picture);
 
 /* Loading Functions - following iffparse.library pattern */
-LONG OpenIFFPicture(struct IFFPicture *picture, const char *filename);
-VOID InitIFFPictureasDOS(struct IFFPicture *picture, BPTR filehandle);
+VOID InitIFFPictureasDOS(struct IFFPicture *picture);
+LONG OpenIFFPicture(struct IFFPicture *picture, LONG rwMode);
 VOID CloseIFFPicture(struct IFFPicture *picture);
 LONG ParseIFFPicture(struct IFFPicture *picture);
 
@@ -35,6 +35,7 @@ LONG ReadBODY(struct IFFPicture *picture);
 LONG ReadABIT(struct IFFPicture *picture);
 
 /* Getter Functions - following iffparse.library pattern */
+struct IFFHandle *GetIFFHandle(struct IFFPicture *picture);
 UWORD GetWidth(struct IFFPicture *picture);
 UWORD GetHeight(struct IFFPicture *picture);
 UWORD GetDepth(struct IFFPicture *picture);
@@ -89,6 +90,7 @@ struct ColorMap {
 #define ID_RGB8    0x52474238UL  /* 'RGB8' */
 #define ID_DEEP    0x44454550UL  /* 'DEEP' */
 #define ID_ACBM    0x4143424DUL  /* 'ACBM' */
+#define ID_FAXX    0x46415858UL  /* 'FAXX' */
 
 /* Error codes */
 #define IFFPICTURE_OK           0

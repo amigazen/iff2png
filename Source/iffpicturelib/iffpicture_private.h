@@ -20,6 +20,9 @@
 #define ID_CAMG    0x43414D47UL  /* 'CAMG' */
 #define ID_BODY    0x424F4459UL  /* 'BODY' */
 #define ID_ABIT    0x41424954UL  /* 'ABIT' */
+#define ID_FXHD    0x46584844UL  /* 'FXHD' */
+#define ID_PAGE    0x50414745UL  /* 'PAGE' */
+#define ID_FLOG    0x464C4F47UL  /* 'FLOG' */
 #define ID_PCHG    0x50434847UL  /* 'PCHG' */
 #define ID_SHAM    0x5348414DUL  /* 'SHAM' */
 #define ID_CTBL    0x4354424CUL  /* 'CTBL' */
@@ -85,6 +88,9 @@ struct IFFPicture {
     BOOL isDecoded;
     ULONG bodyChunkSize;
     ULONG bodyChunkPosition;
+    
+    /* FAXX-specific: store original compression type */
+    UBYTE faxxCompression;
 };
 
 /* Internal function prototypes - declared in image_decoder.c */
@@ -96,6 +102,7 @@ LONG DecodePBM(struct IFFPicture *picture);
 LONG DecodeRGBN(struct IFFPicture *picture);
 LONG DecodeRGB8(struct IFFPicture *picture);
 LONG DecodeACBM(struct IFFPicture *picture);
+LONG DecodeFAXX(struct IFFPicture *picture);
 LONG AnalyzeFormat(struct IFFPicture *picture);
 LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config);
 VOID SetIFFPictureError(struct IFFPicture *picture, LONG error, const char *message);
