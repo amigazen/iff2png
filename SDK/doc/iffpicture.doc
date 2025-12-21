@@ -19,6 +19,18 @@ iffpicture.library/GetFormType
 iffpicture.library/GetVPModes
 iffpicture.library/GetBMHD
 iffpicture.library/GetIFFColorMap
+iffpicture.library/GetFAXXCompression
+iffpicture.library/ReadGRAB
+iffpicture.library/ReadDEST
+iffpicture.library/ReadSPRT
+iffpicture.library/ReadCRNG
+iffpicture.library/ReadAllCRNG
+iffpicture.library/ReadCopyright
+iffpicture.library/ReadAuthor
+iffpicture.library/ReadAnnotation
+iffpicture.library/ReadAllAnnotations
+iffpicture.library/ReadText
+iffpicture.library/ReadAllTexts
 iffpicture.library/GetPixelData
 iffpicture.library/GetPixelDataSize
 iffpicture.library/HasAlpha
@@ -478,6 +490,35 @@ iffpicture.library/GetVPModes                           iffpicture.library/GetVP
    SEE ALSO
 	ReadCAMG(), BestPictureModeID(), <iffpicture.h>
 
+iffpicture.library/GetFAXXCompression             iffpicture.library/GetFAXXCompression
+
+   NAME
+	GetFAXXCompression -- get FAXX compression type. (V1.0)
+
+   SYNOPSIS
+	compression = GetFAXXCompression(picture);
+	D0                            A0
+
+	UBYTE GetFAXXCompression(struct IFFPicture *);
+
+   FUNCTION
+	Returns the compression type used in FAXX format images. Only valid
+	for images with form type ID_FAXX. Returns 0 if not a FAXX image or
+	if compression information is not available.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	compression - Compression type:
+		      0 = None
+		      1 = Modified Huffman (MH)
+		      2 = Modified READ (MR)
+		      4 = Modified Modified READ (MMR)
+
+   SEE ALSO
+	GetFormType(), <iffpicture.h>
+
 iffpicture.library/GetBMHD                               iffpicture.library/GetBMHD
 
    NAME
@@ -870,10 +911,10 @@ iffpicture.library/GetOptimalPNGConfig           iffpicture.library/GetOptimalPN
 			       (V1.0)
 
    SYNOPSIS
-	error = GetOptimalPNGConfig(picture, config);
-	D0                          A0      A1
+	error = GetOptimalPNGConfig(picture, config, opaque);
+	D0                          A0      A1      D0
 
-	LONG GetOptimalPNGConfig(struct IFFPicture *, struct PNGConfig *);
+	LONG GetOptimalPNGConfig(struct IFFPicture *, struct PNGConfig *, BOOL);
 
    FUNCTION
 	Determines the optimal PNG encoding configuration for the IFF image.
@@ -882,11 +923,20 @@ iffpicture.library/GetOptimalPNGConfig           iffpicture.library/GetOptimalPN
 	PNGConfig structure. The caller is responsible for freeing any
 	allocated palette or transparency data using PNGEncoder_FreeConfig().
 
+	The opaque parameter controls transparency handling:
+	- If FALSE (default): Honors transparentColor from BMHD when
+	  masking == mskHasTransparentColor, including index 0 (per ILBM
+	  specification).
+	- If TRUE: Skips transparency for index 0 to keep black visible
+	  (legacy behavior).
+
 	Must be called after AnalyzeFormat() and before DecodeToRGB().
 
    INPUTS
 	picture - pointer to IFFPicture structure.
 	config  - pointer to PNGConfig structure to fill.
+	opaque  - If TRUE, skip transparency for color index 0 (legacy behavior).
+		  If FALSE, honor ILBM specification including transparent index 0.
 
    RESULT
 	error - 0 if successful or an IFFPICTURE_#? error code if unsuccessful.
@@ -985,4 +1035,346 @@ iffpicture.library/GetErrorString                     iffpicture.library/GetErro
 
    SEE ALSO
 	GetLastError(), <iffpicture.h>
+
+iffpicture.library/ReadGRAB                             iffpicture.library/ReadGRAB
+
+   NAME
+	ReadGRAB -- read GRAB chunk (hotspot coordinates). (V1.0)
+
+   SYNOPSIS
+	grab = ReadGRAB(picture);
+	D0                A0
+
+	struct Point2D *ReadGRAB(struct IFFPicture *);
+
+   FUNCTION
+	Reads the GRAB chunk containing hotspot coordinates for the image.
+	Returns a pointer to a Point2D structure in IFFPicture's memory, or
+	NULL if not found. The pointer is valid until FreeIFFPicture() is
+	called. Library owns the memory - caller must NOT free.
+
+	Must be called after ParseIFFPicture(). Metadata is automatically
+	read during ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	grab - pointer to Point2D structure containing hotspot coordinates,
+	       or NULL if not found.
+
+   SEE ALSO
+	ParseIFFPicture(), ReadMetadata(), <iffpicture.h>
+
+iffpicture.library/ReadDEST                             iffpicture.library/ReadDEST
+
+   NAME
+	ReadDEST -- read DEST chunk (destination merge information). (V1.0)
+
+   SYNOPSIS
+	dest = ReadDEST(picture);
+	D0                A0
+
+	struct DestMerge *ReadDEST(struct IFFPicture *);
+
+   FUNCTION
+	Reads the DEST chunk containing destination merge information for
+	bitplane operations. Returns a pointer to a DestMerge structure in
+	IFFPicture's memory, or NULL if not found. The pointer is valid until
+	FreeIFFPicture() is called. Library owns the memory - caller must NOT
+	free.
+
+	Must be called after ParseIFFPicture(). Metadata is automatically
+	read during ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	dest - pointer to DestMerge structure, or NULL if not found.
+
+   SEE ALSO
+	ParseIFFPicture(), ReadMetadata(), <iffpicture.h>
+
+iffpicture.library/ReadSPRT                             iffpicture.library/ReadSPRT
+
+   NAME
+	ReadSPRT -- read SPRT chunk (sprite precedence). (V1.0)
+
+   SYNOPSIS
+	precedence = ReadSPRT(picture);
+	D0                  A0
+
+	UWORD *ReadSPRT(struct IFFPicture *);
+
+   FUNCTION
+	Reads the SPRT chunk containing sprite precedence value. Returns a
+	pointer to a UWORD in IFFPicture's memory containing the precedence
+	value, or NULL if not found. Precedence 0 is the highest (foremost).
+	The pointer is valid until FreeIFFPicture() is called. Library owns
+	the memory - caller must NOT free.
+
+	Must be called after ParseIFFPicture(). Metadata is automatically
+	read during ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	precedence - pointer to UWORD containing precedence value, or NULL
+		     if not found.
+
+   SEE ALSO
+	ParseIFFPicture(), ReadMetadata(), <iffpicture.h>
+
+iffpicture.library/ReadCRNG                             iffpicture.library/ReadCRNG
+
+   NAME
+	ReadCRNG -- read CRNG chunk (color range, first instance). (V1.0)
+
+   SYNOPSIS
+	crng = ReadCRNG(picture);
+	D0                A0
+
+	struct CRange *ReadCRNG(struct IFFPicture *);
+
+   FUNCTION
+	Reads the first CRNG chunk containing color range information for
+	color cycling. Returns a pointer to a CRange structure in
+	IFFPicture's memory, or NULL if not found. Multiple CRNG chunks can
+	exist; this returns the first one. The pointer is valid until
+	FreeIFFPicture() is called. Library owns the memory - caller must NOT
+	free.
+
+	To get all CRNG chunks, use ReadAllCRNG().
+
+	Must be called after ParseIFFPicture(). Metadata is automatically
+	read during ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	crng - pointer to CRange structure, or NULL if not found.
+
+   SEE ALSO
+	ReadAllCRNG(), ParseIFFPicture(), ReadMetadata(), <iffpicture.h>
+
+iffpicture.library/ReadAllCRNG                       iffpicture.library/ReadAllCRNG
+
+   NAME
+	ReadAllCRNG -- read all CRNG chunks (color ranges). (V1.0)
+
+   SYNOPSIS
+	crngList = ReadAllCRNG(picture);
+	D0                    A0
+
+	struct CRangeList *ReadAllCRNG(struct IFFPicture *);
+
+   FUNCTION
+	Reads all CRNG chunks containing color range information. Returns a
+	pointer to a CRangeList structure containing count and array pointer
+	into IFFPicture's memory, or NULL if not found. Pointers are valid
+	until FreeIFFPicture() is called. Library owns the memory - caller
+	must NOT free.
+
+	Must be called after ParseIFFPicture(). Metadata is automatically
+	read during ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	crngList - pointer to CRangeList structure containing count and
+		   ranges array, or NULL if not found.
+
+   SEE ALSO
+	ReadCRNG(), ParseIFFPicture(), ReadMetadata(), <iffpicture.h>
+
+iffpicture.library/ReadCopyright                     iffpicture.library/ReadCopyright
+
+   NAME
+	ReadCopyright -- read Copyright chunk. (V1.0)
+
+   SYNOPSIS
+	copyright = ReadCopyright(picture);
+	D0                      A0
+
+	STRPTR ReadCopyright(struct IFFPicture *);
+
+   FUNCTION
+	Reads the Copyright chunk containing copyright text. Returns a
+	pointer to a null-terminated string in IFFPicture's memory, or NULL
+	if not found. The pointer is valid until FreeIFFPicture() is called.
+	Library owns the memory - caller must NOT free.
+
+	Must be called after ParseIFFPicture(). Metadata is automatically
+	read during ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	copyright - pointer to null-terminated copyright string, or NULL if
+		    not found.
+
+   SEE ALSO
+	ReadAuthor(), ParseIFFPicture(), ReadMetadata(), <iffpicture.h>
+
+iffpicture.library/ReadAuthor                           iffpicture.library/ReadAuthor
+
+   NAME
+	ReadAuthor -- read AUTH chunk (author information). (V1.0)
+
+   SYNOPSIS
+	author = ReadAuthor(picture);
+	D0                A0
+
+	STRPTR ReadAuthor(struct IFFPicture *);
+
+   FUNCTION
+	Reads the AUTH chunk containing author information. Returns a pointer
+	to a null-terminated string in IFFPicture's memory, or NULL if not
+	found. The pointer is valid until FreeIFFPicture() is called. Library
+	owns the memory - caller must NOT free.
+
+	Must be called after ParseIFFPicture(). Metadata is automatically
+	read during ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	author - pointer to null-terminated author string, or NULL if not
+		 found.
+
+   SEE ALSO
+	ReadCopyright(), ParseIFFPicture(), ReadMetadata(), <iffpicture.h>
+
+iffpicture.library/ReadAnnotation                     iffpicture.library/ReadAnnotation
+
+   NAME
+	ReadAnnotation -- read ANNO chunk (first instance). (V1.0)
+
+   SYNOPSIS
+	annotation = ReadAnnotation(picture);
+	D0                      A0
+
+	STRPTR ReadAnnotation(struct IFFPicture *);
+
+   FUNCTION
+	Reads the first ANNO chunk containing annotation text. Returns a
+	pointer to a null-terminated string in IFFPicture's memory, or NULL
+	if not found. Multiple ANNO chunks can exist; this returns the first
+	one. The pointer is valid until FreeIFFPicture() is called. Library
+	owns the memory - caller must NOT free.
+
+	To get all ANNO chunks, use ReadAllAnnotations().
+
+	Must be called after ParseIFFPicture(). Metadata is automatically
+	read during ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	annotation - pointer to null-terminated annotation string, or NULL if
+		     not found.
+
+   SEE ALSO
+	ReadAllAnnotations(), ParseIFFPicture(), ReadMetadata(), <iffpicture.h>
+
+iffpicture.library/ReadAllAnnotations           iffpicture.library/ReadAllAnnotations
+
+   NAME
+	ReadAllAnnotations -- read all ANNO chunks (annotations). (V1.0)
+
+   SYNOPSIS
+	textList = ReadAllAnnotations(picture);
+	D0                        A0
+
+	struct TextList *ReadAllAnnotations(struct IFFPicture *);
+
+   FUNCTION
+	Reads all ANNO chunks containing annotation text. Returns a pointer
+	to a TextList structure containing count and array pointer into
+	IFFPicture's memory, or NULL if not found. Pointers are valid until
+	FreeIFFPicture() is called. Library owns the memory - caller must
+	NOT free.
+
+	Must be called after ParseIFFPicture(). Metadata is automatically
+	read during ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	textList - pointer to TextList structure containing count and texts
+		   array, or NULL if not found.
+
+   SEE ALSO
+	ReadAnnotation(), ParseIFFPicture(), ReadMetadata(), <iffpicture.h>
+
+iffpicture.library/ReadText                             iffpicture.library/ReadText
+
+   NAME
+	ReadText -- read TEXT chunk (first instance). (V1.0)
+
+   SYNOPSIS
+	text = ReadText(picture);
+	D0              A0
+
+	STRPTR ReadText(struct IFFPicture *);
+
+   FUNCTION
+	Reads the first TEXT chunk containing text data. Returns a pointer
+	to a null-terminated string in IFFPicture's memory, or NULL if not
+	found. Multiple TEXT chunks can exist; this returns the first one.
+	The pointer is valid until FreeIFFPicture() is called. Library owns
+	the memory - caller must NOT free.
+
+	To get all TEXT chunks, use ReadAllTexts().
+
+	Must be called after ParseIFFPicture(). Metadata is automatically
+	read during ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	text - pointer to null-terminated text string, or NULL if not found.
+
+   SEE ALSO
+	ReadAllTexts(), ParseIFFPicture(), ReadMetadata(), <iffpicture.h>
+
+iffpicture.library/ReadAllTexts                       iffpicture.library/ReadAllTexts
+
+   NAME
+	ReadAllTexts -- read all TEXT chunks. (V1.0)
+
+   SYNOPSIS
+	textList = ReadAllTexts(picture);
+	D0                    A0
+
+	struct TextList *ReadAllTexts(struct IFFPicture *);
+
+   FUNCTION
+	Reads all TEXT chunks containing text data. Returns a pointer to a
+	TextList structure containing count and array pointer into
+	IFFPicture's memory, or NULL if not found. Pointers are valid until
+	FreeIFFPicture() is called. Library owns the memory - caller must
+	NOT free.
+
+	Must be called after ParseIFFPicture(). Metadata is automatically
+	read during ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	textList - pointer to TextList structure containing count and texts
+		   array, or NULL if not found.
+
+   SEE ALSO
+	ReadText(), ParseIFFPicture(), ReadMetadata(), <iffpicture.h>
 
