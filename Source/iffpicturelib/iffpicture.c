@@ -95,7 +95,7 @@ VOID FreeIFFPicture(struct IFFPicture *picture)
         if (picture->cmap->data) {
             FreeMem(picture->cmap->data, picture->cmap->numcolors * 3);
         }
-        FreeMem(picture->cmap, sizeof(struct ColorMap));
+        FreeMem(picture->cmap, sizeof(struct IFFColorMap));
         picture->cmap = NULL;
     }
     
@@ -334,11 +334,11 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
         }
         /* Create default black/white CMAP for FAXX if not already present */
         if (!picture->cmap) {
-            struct ColorMap *cmap;
+            struct IFFColorMap *cmap;
             UBYTE *data;
             
             /* Allocate ColorMap structure - use public memory (not chip RAM) */
-            cmap = (struct ColorMap *)AllocMem(sizeof(struct ColorMap), MEMF_PUBLIC | MEMF_CLEAR);
+            cmap = (struct IFFColorMap *)AllocMem(sizeof(struct IFFColorMap), MEMF_PUBLIC | MEMF_CLEAR);
             if (!cmap) {
                 /* Clean up BMHD allocated by ReadFXHD */
                 if (picture->bmhd) {
@@ -352,7 +352,7 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
             /* Allocate 2-color palette (black and white) - 6 bytes */
             data = (UBYTE *)AllocMem(6, MEMF_PUBLIC | MEMF_CLEAR);
             if (!data) {
-                FreeMem(cmap, sizeof(struct ColorMap));
+                FreeMem(cmap, sizeof(struct IFFColorMap));
                 /* Clean up BMHD allocated by ReadFXHD */
                 if (picture->bmhd) {
                     FreeMem(picture->bmhd, sizeof(struct BitMapHeader));
@@ -385,7 +385,7 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
                 if (picture->cmap->data) {
                     FreeMem(picture->cmap->data, picture->cmap->numcolors * 3);
                 }
-                FreeMem(picture->cmap, sizeof(struct ColorMap));
+                FreeMem(picture->cmap, sizeof(struct IFFColorMap));
                 picture->cmap = NULL;
             }
             if (picture->bmhd) {
@@ -467,7 +467,7 @@ ULONG GetFormType(struct IFFPicture *picture)
     return picture->formtype;
 }
 
-ULONG GetViewportModes(struct IFFPicture *picture)
+ULONG GetVPModes(struct IFFPicture *picture)
 {
     if (!picture) {
         return 0;
@@ -483,7 +483,7 @@ struct BitMapHeader *GetBMHD(struct IFFPicture *picture)
     return picture->bmhd;
 }
 
-struct ColorMap *GetColorMap(struct IFFPicture *picture)
+struct IFFColorMap *GetIFFColorMap(struct IFFPicture *picture)
 {
     if (!picture) {
         return NULL;
@@ -630,7 +630,7 @@ LONG ReadBMHD(struct IFFPicture *picture)
 LONG ReadCMAP(struct IFFPicture *picture)
 {
     struct StoredProperty *sp;
-    struct ColorMap *cmap;
+    struct IFFColorMap *cmap;
     ULONG numcolors;
     ULONG i;
     UBYTE *data;
@@ -665,8 +665,8 @@ LONG ReadCMAP(struct IFFPicture *picture)
         return RETURN_OK;
     }
     
-    /* Allocate ColorMap structure - use public memory (not chip RAM) */
-    cmap = (struct ColorMap *)AllocMem(sizeof(struct ColorMap), MEMF_PUBLIC | MEMF_CLEAR);
+    /* Allocate IFFColorMap structure - use public memory (not chip RAM) */
+    cmap = (struct IFFColorMap *)AllocMem(sizeof(struct IFFColorMap), MEMF_PUBLIC | MEMF_CLEAR);
     if (!cmap) {
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate ColorMap");
         return RETURN_FAIL;
@@ -675,7 +675,7 @@ LONG ReadCMAP(struct IFFPicture *picture)
     /* Allocate color data - use public memory (not chip RAM) */
     data = (UBYTE *)AllocMem(sp->sp_Size, MEMF_PUBLIC | MEMF_CLEAR);
     if (!data) {
-        FreeMem(cmap, sizeof(struct ColorMap));
+        FreeMem(cmap, sizeof(struct IFFColorMap));
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate ColorMap data");
         return RETURN_FAIL;
     }

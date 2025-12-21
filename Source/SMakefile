@@ -13,7 +13,8 @@ MAIN_OBJS = main.o png_encoder.o
 
 # Library objects
 LIB_OBJS = iffpicturelib/iffpicture.o iffpicturelib/image_decoder.o \
-           iffpicturelib/image_analyzer.o iffpicturelib/utils.o
+           iffpicturelib/image_analyzer.o iffpicturelib/bitmap_renderer.o \
+           iffpicturelib/utils.o
 
 # Uncomment the next line to enable debug output:
 # DEBUG_FLAG = DEFINE=DEBUG
@@ -67,6 +68,9 @@ iffpicturelib/image_decoder.o: iffpicturelib/image_decoder.c iffpicturelib/iffpi
 
 iffpicturelib/image_analyzer.o: iffpicturelib/image_analyzer.c iffpicturelib/iffpicture_private.h
 	sc $(CFLAGS) OBJNAME=$@ iffpicturelib/image_analyzer.c
+
+iffpicturelib/bitmap_renderer.o: iffpicturelib/bitmap_renderer.c iffpicturelib/iffpicture_private.h
+	sc $(CFLAGS) OBJNAME=$@ iffpicturelib/bitmap_renderer.c
 
 iffpicturelib/utils.o: iffpicturelib/utils.c iffpicturelib/iffpicture_private.h
 	sc $(CFLAGS) OBJNAME=$@ iffpicturelib/utils.c

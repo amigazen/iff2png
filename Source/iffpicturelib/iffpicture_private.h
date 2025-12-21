@@ -57,7 +57,7 @@
 struct IFFPicture {
     /* Public members */
     struct BitMapHeader *bmhd;
-    struct ColorMap *cmap;
+    struct IFFColorMap *cmap;
     ULONG viewportmodes;
     ULONG formtype;
     

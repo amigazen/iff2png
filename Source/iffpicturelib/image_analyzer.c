@@ -10,6 +10,10 @@
 #include <png.h> /* For PNG_COLOR_TYPE_* constants */
 #include <proto/exec.h>
 #include <proto/utility.h>
+#include <proto/graphics.h>
+#include <graphics/modeid.h>
+#include <graphics/displayinfo.h>
+#include <utility/tagitem.h>
 
 /* Forward declarations for getter functions */
 UWORD GetWidth(struct IFFPicture *picture);
@@ -236,4 +240,191 @@ LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config)
                   (ULONG)config->color_type, (ULONG)config->bit_depth, (ULONG)config->num_palette);
     
     return RETURN_OK;
+}
+
+/*
+** BestPictureModeID - Get best Amiga screenmode for displaying image
+** Uses graphics.library BestModeIDA() to find best matching ModeID
+** Returns: ModeID on success, INVALID_ID on failure
+**
+** This function determines the best screenmode for displaying an IFF image:
+** - If CAMG chunk is present, uses those viewport mode flags (HAM, EHB, LACE, HIRES)
+** - If CAMG is missing, infers requirements from image properties (width, height, depth)
+** - Optionally matches to a specific monitor or ViewPort
+**
+** Parameters:
+**   picture - IFFPicture structure (must have been parsed)
+**   sourceViewPort - Optional ViewPort to match monitor type (NULL if not used)
+**   sourceModeID - Optional ModeID to use as source (0 if not used, overrides ViewPort)
+**   monitorID - Optional monitor ID to restrict search (0 if not used)
+**
+** Returns:
+**   ModeID - Best matching screenmode ID, or INVALID_ID if no match found
+*/
+ULONG BestPictureModeID(struct IFFPicture *picture, struct ViewPort *sourceViewPort, ULONG sourceModeID, ULONG monitorID)
+{
+    struct TagItem tags[16];
+    struct TagItem *tagPtr;
+    ULONG dipfMustHave;
+    ULONG dipfMustNotHave;
+    ULONG viewportModes;
+    UWORD width;
+    UWORD height;
+    UBYTE depth;
+    ULONG modeID;
+    struct Library *GraphicsBase;
+    
+    if (!picture || !picture->isLoaded || !picture->bmhd) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Picture not loaded or BMHD missing");
+        }
+        return INVALID_ID;
+    }
+    
+    /* Open graphics.library */
+    GraphicsBase = OpenLibrary("graphics.library", 39);
+    if (!GraphicsBase) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_ERROR, "Cannot open graphics.library");
+        }
+        return INVALID_ID;
+    }
+    
+    /* Get image dimensions and depth */
+    width = picture->bmhd->w;
+    height = picture->bmhd->h;
+    depth = picture->bmhd->nPlanes;
+    
+    /* Validate dimensions (BestModeIDA requires non-zero) */
+    if (width == 0 || height == 0) {
+        CloseLibrary(GraphicsBase);
+        SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid image dimensions");
+        return INVALID_ID;
+    }
+    
+    /* Initialize tag list pointer */
+    tagPtr = tags;
+    
+    /* Set up DIPF flags based on CAMG viewport modes */
+    viewportModes = picture->viewportmodes;
+    dipfMustHave = 0;
+    dipfMustNotHave = SPECIAL_FLAGS; /* Default: exclude special flags */
+    
+    /* Map CAMG flags to DIPF flags */
+    if (viewportModes & vmHAM) {
+        dipfMustHave |= DIPF_IS_HAM;
+    }
+    if (viewportModes & vmEXTRA_HALFBRITE) {
+        dipfMustHave |= DIPF_IS_EXTRAHALFBRITE;
+    }
+    if (viewportModes & vmLACE) {
+        dipfMustHave |= DIPF_IS_LACE;
+    }
+    /* Note: vmHIRES is a CAMG viewport mode flag, not a DIPF flag */
+    /* HIRES modes are identified by their resolution, not a DIPF property */
+    
+    /* If no CAMG chunk, infer requirements from image properties */
+    if (viewportModes == 0) {
+        /* For HAM images detected during analysis, require HAM mode */
+        if (picture->isHAM) {
+            dipfMustHave |= DIPF_IS_HAM;
+        }
+        /* For EHB images detected during analysis, require EHB mode */
+        if (picture->isEHB) {
+            dipfMustHave |= DIPF_IS_EXTRAHALFBRITE;
+        }
+    }
+    
+    /* Set up tag list for BestModeIDA() */
+    
+    /* Nominal dimensions (aspect ratio) */
+    tagPtr->ti_Tag = BIDTAG_NominalWidth;
+    tagPtr->ti_Data = width;
+    tagPtr++;
+    tagPtr->ti_Tag = BIDTAG_NominalHeight;
+    tagPtr->ti_Data = height;
+    tagPtr++;
+    
+    /* Desired dimensions (for distinguishing between modes with same aspect) */
+    tagPtr->ti_Tag = BIDTAG_DesiredWidth;
+    tagPtr->ti_Data = width;
+    tagPtr++;
+    tagPtr->ti_Tag = BIDTAG_DesiredHeight;
+    tagPtr->ti_Data = height;
+    tagPtr++;
+    
+    /* Depth requirement */
+    tagPtr->ti_Tag = BIDTAG_Depth;
+    tagPtr->ti_Data = depth;
+    tagPtr++;
+    
+    /* DIPF flags */
+    if (dipfMustHave != 0) {
+        tagPtr->ti_Tag = BIDTAG_DIPFMustHave;
+        tagPtr->ti_Data = dipfMustHave;
+        tagPtr++;
+    }
+    if (dipfMustNotHave != 0) {
+        tagPtr->ti_Tag = BIDTAG_DIPFMustNotHave;
+        tagPtr->ti_Data = dipfMustNotHave;
+        tagPtr++;
+    }
+    
+    /* Optional: Source ViewPort or ModeID */
+    if (sourceModeID != 0) {
+        tagPtr->ti_Tag = BIDTAG_SourceID;
+        tagPtr->ti_Data = sourceModeID;
+        tagPtr++;
+    } else if (sourceViewPort != NULL) {
+        tagPtr->ti_Tag = BIDTAG_ViewPort;
+        tagPtr->ti_Data = (ULONG)sourceViewPort;
+        tagPtr++;
+    }
+    
+    /* Optional: Monitor ID */
+    if (monitorID != 0) {
+        tagPtr->ti_Tag = BIDTAG_MonitorID;
+        tagPtr->ti_Data = monitorID;
+        tagPtr++;
+    }
+    
+    /* Terminate tag list */
+    tagPtr->ti_Tag = TAG_END;
+    
+    /* Call BestModeIDA() */
+    modeID = BestModeIDA(tags);
+    
+    /* Check if the mode is actually available before returning it */
+    if (modeID != INVALID_ID) {
+        ULONG notAvailable;
+        notAvailable = ModeNotAvailable(modeID);
+        if (notAvailable != 0) {
+            /* Mode is not available - return INVALID_ID */
+            /* ModeNotAvailable returns error code if unavailable, 0 if available */
+            modeID = INVALID_ID;
+            if (notAvailable & DI_AVAIL_NOCHIPS) {
+                SetIFFPictureError(picture, IFFPICTURE_UNSUPPORTED, "Recommended screenmode requires chips not available");
+            } else if (notAvailable & DI_AVAIL_NOMONITOR) {
+                SetIFFPictureError(picture, IFFPICTURE_UNSUPPORTED, "Recommended screenmode requires monitor not available");
+            } else if (notAvailable & DI_AVAIL_NOTWITHGENLOCK) {
+                SetIFFPictureError(picture, IFFPICTURE_UNSUPPORTED, "Recommended screenmode not available with genlock");
+            } else {
+                SetIFFPictureError(picture, IFFPICTURE_UNSUPPORTED, "Recommended screenmode is not available");
+            }
+        }
+    }
+    
+    /* Close graphics.library */
+    CloseLibrary(GraphicsBase);
+    
+    if (modeID == INVALID_ID) {
+        if (picture->lastError == IFFPICTURE_OK) {
+            SetIFFPictureError(picture, IFFPICTURE_UNSUPPORTED, "No matching screenmode found");
+        }
+    }
+    
+    DEBUG_PRINTF5("DEBUG: BestPictureModeID - width=%ld height=%ld depth=%ld viewportModes=0x%08lx modeID=0x%08lx\n",
+                  (ULONG)width, (ULONG)height, (ULONG)depth, viewportModes, modeID);
+    
+    return modeID;
 }
