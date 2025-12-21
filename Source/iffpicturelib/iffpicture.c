@@ -456,6 +456,11 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
         ReadCMAP(picture); /* CMAP is optional, don't fail if missing */
         ReadCAMG(picture); /* CAMG is optional, don't fail if missing */
         
+        /* 24-bit ILBM (nPlanes == 24) is true-color, not indexed */
+        if (formType == ID_ILBM && picture->bmhd && picture->bmhd->nPlanes == 24) {
+            picture->isIndexed = FALSE;
+        }
+        
         /* Read and store metadata chunks */
         ReadMetadata(picture);
         

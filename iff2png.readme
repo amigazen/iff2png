@@ -1,0 +1,74 @@
+  Short:        Convert IFF images (including ILBM, DEEP, RGB8, RGBN, FAXX, PBM, ACBM) to PNG format
+  Uploader:     toolkit@amigazen.com
+  Author:       amigazen project
+  Type:         gfx/conv
+  Version:      1.3
+  Architecture: m68k-amigaos >= 3.1
+  Distribution: Aminet
+  Kurz:         Konvertiert IFF-Bilder ins PNG-Format
+
+  iff2png is a command-line tool for converting IFF (Interchange File Format)
+  bitmap images to PNG format. It supports all major IFF image formats
+  including ILBM, PBM, RGBN, RGB8, DEEP, ACBM, 24-bit ILBM, and FAXX.
+
+  Features:
+  - Supports all major IFF formats (ILBM, PBM, RGBN, RGB8, DEEP, ACBM, FAXX)
+  - Handles 24-bit ILBM (deep ILBM with true-color RGB)
+  - Automatic optimal PNG encoding based on source image properties
+  - Preserves transparency and alpha channels
+  - Supports HAM (Hold And Modify) and EHB (Extra Half-Brite) modes
+  - Preserves metadata (copyright, author, annotations) unless stripped
+
+  Requirements:
+  - AmigaOS 3.1 or higher
+
+  Usage:
+    iff2png SOURCE TARGET [OPTIONS]
+
+  Arguments:
+    SOURCE - Input IFF image file (required)
+    TARGET - Output PNG file (required)
+
+  Options:
+    FORCE - Overwrite existing output file without prompting
+    QUIET - Suppress normal output messages
+    OPAQUE - Keep color 0 opaque instead of transparent (legacy behavior)
+    STRIP or NOMETADATA - Remove metadata from output PNG
+
+  Examples:
+    iff2png source.iff ram:target.png
+    iff2png source.iff target.png FORCE QUIET
+    iff2png source.iff target.png OPAQUE
+
+    N.B. file extension is not used to recognize file types
+
+  Supported IFF Formats:
+  - ILBM (InterLeaved BitMap) - Standard Amiga bitmap with bitplanes
+  - PBM (Packed BitMap) - Packed pixel format
+  - RGBN - RGB with N planes (true-color)
+  - RGB8 - RGB 8-bit format (24-bit color, 32-bit with alpha)
+  - DEEP - High bit-depth format for professional graphics
+  - ACBM (Amiga Continuous BitMap) - Format with separate alpha channel
+  - 24-bit ILBM - Deep ILBM with 24 bitplanes for true-color RGB
+  - FAXX - Facsimile image format using ITU-T T.4 compression
+
+  The tool automatically selects the optimal PNG encoding based on the source
+  image properties, including color type, bit depth, palette optimization,
+  and transparency handling.
+
+  This software is part of the amigazen project, which uses modern software
+
+  For more information, visit:
+  - GitHub: https://github.com/amigazen/iff2png/
+  - Web: http://www.amigazen.com/toolkit/
+  - Email: toolkit@amigazen.com
+
+  This software is Free and Open Source Software distributed on BSD-2 license terms
+
+  Acknowledgements:
+  - zlib compression library by Jean-loup Gailly and Mark Adler
+  - libpng PNG Reference Library by the PNG Development Group
+
+  amigazen project philosophy is based on openness:
+  Open to anyone and everyone - Open source and free for all - Open your mind and create!
+

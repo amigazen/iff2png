@@ -723,6 +723,13 @@ static LONG DecompressByteRun1(struct IFFHandle *iff, UBYTE *dest, LONG destByte
 ** - Bits are stored MSB first (bit 7 = leftmost pixel)
 ** - Pixel index is built from bits across all planes
 ** - RGB is looked up from CMAP using pixel index
+**
+** 24-bit ILBM (deep ILBM):
+** - nPlanes = 24 (8 bits per color component)
+** - Planes 0-7: Red component (R0-R7)
+** - Planes 8-15: Green component (G0-G7)
+** - Planes 16-23: Blue component (B0-B7)
+** - No CMAP required (bits represent absolute RGB values)
 */
 LONG DecodeILBM(struct IFFPicture *picture)
 {
@@ -737,9 +744,10 @@ LONG DecodeILBM(struct IFFPicture *picture)
     UBYTE *cmapData;
     ULONG maxColors;
     UBYTE *alphaValues; /* For mask plane alpha channel */
+    BOOL is24Bit; /* TRUE if 24-bit ILBM (direct RGB) */
     
-    if (!picture || !picture->bmhd || !picture->cmap || !picture->cmap->data) {
-        SetIFFPictureError(picture, IFFPICTURE_INVALID, "Missing BMHD or CMAP for ILBM decoding");
+    if (!picture || !picture->bmhd) {
+        SetIFFPictureError(picture, IFFPICTURE_INVALID, "Missing BMHD for ILBM decoding");
         return RETURN_FAIL;
     }
     
@@ -747,19 +755,26 @@ LONG DecodeILBM(struct IFFPicture *picture)
     height = picture->bmhd->h;
     depth = picture->bmhd->nPlanes;
     
+    /* Check if this is 24-bit ILBM (deep ILBM) */
+    is24Bit = (depth == 24);
+    
+    /* For non-24-bit ILBM, CMAP is required */
+    if (!is24Bit) {
+        if (!picture->cmap || !picture->cmap->data) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Missing CMAP for ILBM decoding");
+            return RETURN_FAIL;
+        }
+        cmapData = picture->cmap->data;
+        maxColors = picture->cmap->numcolors;
+    } else {
+        /* 24-bit ILBM doesn't require CMAP */
+        cmapData = NULL;
+        maxColors = 0;
+    }
+    
     DEBUG_PRINTF4("DEBUG: DecodeILBM - Starting decode: %ldx%ld, %ld planes, masking=%ld\n",
                   width, height, depth, picture->bmhd->masking);
     rowBytes = RowBytes(width);
-    cmapData = picture->cmap->data;
-    maxColors = picture->cmap->numcolors;
-    
-    /* For indexed images, also store original palette indices */
-    picture->paletteIndicesSize = (ULONG)width * height;
-    picture->paletteIndices = (UBYTE *)AllocMem(picture->paletteIndicesSize, MEMF_PUBLIC | MEMF_CLEAR);
-    if (!picture->paletteIndices) {
-        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate palette indices buffer");
-        return RETURN_FAIL;
-    }
     
     /* Allocate pixel data buffer */
     if (picture->bmhd->masking == mskHasMask) {
@@ -773,14 +788,33 @@ LONG DecodeILBM(struct IFFPicture *picture)
     /* Use public memory (not chip RAM, we're not rendering to display) */
     picture->pixelData = (UBYTE *)AllocMem(picture->pixelDataSize, MEMF_PUBLIC | MEMF_CLEAR);
     if (!picture->pixelData) {
-        FreeMem(picture->paletteIndices, picture->paletteIndicesSize);
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate pixel data buffer");
         return RETURN_FAIL;
+    }
+    
+    /* For indexed images (non-24-bit), also store original palette indices */
+    if (!is24Bit) {
+        picture->paletteIndicesSize = (ULONG)width * height;
+        picture->paletteIndices = (UBYTE *)AllocMem(picture->paletteIndicesSize, MEMF_PUBLIC | MEMF_CLEAR);
+        if (!picture->paletteIndices) {
+            FreeMem(picture->pixelData, picture->pixelDataSize);
+            SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate palette indices buffer");
+            return RETURN_FAIL;
+        }
+        paletteOut = picture->paletteIndices;
+    } else {
+        picture->paletteIndices = NULL;
+        picture->paletteIndicesSize = 0;
+        paletteOut = NULL;
     }
     
     /* Allocate buffer for one plane row */
     planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_PUBLIC | MEMF_CLEAR);
     if (!planeBuffer) {
+        if (picture->paletteIndices) {
+            FreeMem(picture->paletteIndices, picture->paletteIndicesSize);
+        }
+        FreeMem(picture->pixelData, picture->pixelDataSize);
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate plane buffer");
         return RETURN_FAIL;
     }
@@ -791,126 +825,318 @@ LONG DecodeILBM(struct IFFPicture *picture)
         alphaValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
         if (!alphaValues) {
             FreeMem(planeBuffer, rowBytes);
+            if (picture->paletteIndices) {
+                FreeMem(picture->paletteIndices, picture->paletteIndicesSize);
+            }
+            FreeMem(picture->pixelData, picture->pixelDataSize);
             SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate alpha buffer");
             return RETURN_FAIL;
         }
     }
     
     rgbOut = picture->pixelData;
-    paletteOut = picture->paletteIndices;
     
     /* Process each row */
     for (row = 0; row < height; row++) {
-        /* Clear pixel indices for this row */
-        UBYTE *pixelIndices = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
-        if (!pixelIndices) {
-            FreeMem(planeBuffer, rowBytes);
-            if (alphaValues) FreeMem(alphaValues, width);
-            SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate pixel indices");
-            return RETURN_FAIL;
-        }
-        
-        /* Read all data planes for this row (planes 0 through nPlanes-1) */
-        for (plane = 0; plane < depth; plane++) {
-            /* Read/decompress plane data */
-            if (picture->bmhd->compression == cmpByteRun1) {
-                bytesRead = DecompressByteRun1(picture->iff, planeBuffer, rowBytes);
-                if (bytesRead != rowBytes) {
-                    FreeMem(pixelIndices, width);
-                    FreeMem(planeBuffer, rowBytes);
-                    if (alphaValues) FreeMem(alphaValues, width);
-                    SetIFFPictureError(picture, IFFPICTURE_BADFILE, "ByteRun1 decompression failed");
-                    return RETURN_FAIL;
-                }
-            } else {
-                /* Uncompressed */
-                bytesRead = ReadChunkBytes(picture->iff, planeBuffer, rowBytes);
-                if (bytesRead != rowBytes) {
-                    FreeMem(pixelIndices, width);
-                    FreeMem(planeBuffer, rowBytes);
-                    if (alphaValues) FreeMem(alphaValues, width);
-                    SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read plane data");
-                    return RETURN_FAIL;
-                }
+        if (is24Bit) {
+            /* 24-bit ILBM: Decode bitplanes directly as RGB */
+            /* Planes 0-7: Red, Planes 8-15: Green, Planes 16-23: Blue */
+            UBYTE *rValues, *gValues, *bValues;
+            
+            rValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+            gValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+            bValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+            
+            if (!rValues || !gValues || !bValues) {
+                if (rValues) FreeMem(rValues, width);
+                if (gValues) FreeMem(gValues, width);
+                if (bValues) FreeMem(bValues, width);
+                FreeMem(planeBuffer, rowBytes);
+                if (alphaValues) FreeMem(alphaValues, width);
+                SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate 24-bit component buffers");
+                return RETURN_FAIL;
             }
             
-            /* Extract bits from this plane to build pixel indices */
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8); /* MSB first */
-                UBYTE bit = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 1 : 0;
+            /* Decode Red component (planes 0-7) */
+            for (plane = 0; plane < 8; plane++) {
+                if (picture->bmhd->compression == cmpByteRun1) {
+                    bytesRead = DecompressByteRun1(picture->iff, planeBuffer, rowBytes);
+                    if (bytesRead != rowBytes) {
+                        FreeMem(rValues, width);
+                        FreeMem(gValues, width);
+                        FreeMem(bValues, width);
+                        FreeMem(planeBuffer, rowBytes);
+                        if (alphaValues) FreeMem(alphaValues, width);
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "ByteRun1 decompression failed");
+                        return RETURN_FAIL;
+                    }
+                } else {
+                    bytesRead = ReadChunkBytes(picture->iff, planeBuffer, rowBytes);
+                    if (bytesRead != rowBytes) {
+                        FreeMem(rValues, width);
+                        FreeMem(gValues, width);
+                        FreeMem(bValues, width);
+                        FreeMem(planeBuffer, rowBytes);
+                        if (alphaValues) FreeMem(alphaValues, width);
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read plane data");
+                        return RETURN_FAIL;
+                    }
+                }
                 
-                if (bit) {
-                    pixelIndices[col] |= (1 << plane);
-                }
-            }
-        }
-        
-        /* Read mask plane if present (comes after all data planes) */
-        if (picture->bmhd->masking == mskHasMask) {
-            /* Read/decompress mask plane */
-            if (picture->bmhd->compression == cmpByteRun1) {
-                bytesRead = DecompressByteRun1(picture->iff, planeBuffer, rowBytes);
-                if (bytesRead != rowBytes) {
-                    FreeMem(pixelIndices, width);
-                    FreeMem(planeBuffer, rowBytes);
-                    FreeMem(alphaValues, width);
-                    SetIFFPictureError(picture, IFFPICTURE_BADFILE, "ByteRun1 decompression failed for mask");
-                    return RETURN_FAIL;
-                }
-            } else {
-                bytesRead = ReadChunkBytes(picture->iff, planeBuffer, rowBytes);
-                if (bytesRead != rowBytes) {
-                    FreeMem(pixelIndices, width);
-                    FreeMem(planeBuffer, rowBytes);
-                    FreeMem(alphaValues, width);
-                    SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read mask plane");
-                    return RETURN_FAIL;
+                /* Extract bits from this plane */
+                for (col = 0; col < width; col++) {
+                    UBYTE byteIndex = col / 8;
+                    UBYTE bitIndex = 7 - (col % 8); /* MSB first */
+                    UBYTE bit = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 1 : 0;
+                    
+                    if (bit) {
+                        rValues[col] |= (1 << plane);
+                    }
                 }
             }
             
-            /* Extract mask bits to alpha channel */
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8); /* MSB first */
-                alphaValues[col] = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 0xFF : 0x00;
+            /* Decode Green component (planes 8-15) */
+            for (plane = 8; plane < 16; plane++) {
+                if (picture->bmhd->compression == cmpByteRun1) {
+                    bytesRead = DecompressByteRun1(picture->iff, planeBuffer, rowBytes);
+                    if (bytesRead != rowBytes) {
+                        FreeMem(rValues, width);
+                        FreeMem(gValues, width);
+                        FreeMem(bValues, width);
+                        FreeMem(planeBuffer, rowBytes);
+                        if (alphaValues) FreeMem(alphaValues, width);
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "ByteRun1 decompression failed");
+                        return RETURN_FAIL;
+                    }
+                } else {
+                    bytesRead = ReadChunkBytes(picture->iff, planeBuffer, rowBytes);
+                    if (bytesRead != rowBytes) {
+                        FreeMem(rValues, width);
+                        FreeMem(gValues, width);
+                        FreeMem(bValues, width);
+                        FreeMem(planeBuffer, rowBytes);
+                        if (alphaValues) FreeMem(alphaValues, width);
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read plane data");
+                        return RETURN_FAIL;
+                    }
+                }
+                
+                /* Extract bits from this plane */
+                for (col = 0; col < width; col++) {
+                    UBYTE byteIndex = col / 8;
+                    UBYTE bitIndex = 7 - (col % 8); /* MSB first */
+                    UBYTE bit = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 1 : 0;
+                    
+                    if (bit) {
+                        gValues[col] |= (1 << (plane - 8));
+                    }
+                }
             }
-        }
-        
-        /* Convert pixel indices to RGB using CMAP and store original indices */
-        for (col = 0; col < width; col++) {
-            pixelIndex = pixelIndices[col];
             
-            /* Clamp to valid CMAP range */
-            if (pixelIndex >= maxColors) {
-                pixelIndex = (UBYTE)(maxColors - 1);
+            /* Decode Blue component (planes 16-23) */
+            for (plane = 16; plane < 24; plane++) {
+                if (picture->bmhd->compression == cmpByteRun1) {
+                    bytesRead = DecompressByteRun1(picture->iff, planeBuffer, rowBytes);
+                    if (bytesRead != rowBytes) {
+                        FreeMem(rValues, width);
+                        FreeMem(gValues, width);
+                        FreeMem(bValues, width);
+                        FreeMem(planeBuffer, rowBytes);
+                        if (alphaValues) FreeMem(alphaValues, width);
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "ByteRun1 decompression failed");
+                        return RETURN_FAIL;
+                    }
+                } else {
+                    bytesRead = ReadChunkBytes(picture->iff, planeBuffer, rowBytes);
+                    if (bytesRead != rowBytes) {
+                        FreeMem(rValues, width);
+                        FreeMem(gValues, width);
+                        FreeMem(bValues, width);
+                        FreeMem(planeBuffer, rowBytes);
+                        if (alphaValues) FreeMem(alphaValues, width);
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read plane data");
+                        return RETURN_FAIL;
+                    }
+                }
+                
+                /* Extract bits from this plane */
+                for (col = 0; col < width; col++) {
+                    UBYTE byteIndex = col / 8;
+                    UBYTE bitIndex = 7 - (col % 8); /* MSB first */
+                    UBYTE bit = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 1 : 0;
+                    
+                    if (bit) {
+                        bValues[col] |= (1 << (plane - 16));
+                    }
+                }
             }
             
-            /* Store original palette index */
-            *paletteOut++ = pixelIndex;
-            
-            /* Look up RGB from CMAP */
-            rgbOut[0] = cmapData[pixelIndex * 3];     /* R */
-            rgbOut[1] = cmapData[pixelIndex * 3 + 1]; /* G */
-            rgbOut[2] = cmapData[pixelIndex * 3 + 2]; /* B */
-            
-            /* Handle 4-bit palette scaling if needed */
-            if (picture->cmap->is4Bit) {
-                rgbOut[0] |= (rgbOut[0] >> 4);
-                rgbOut[1] |= (rgbOut[1] >> 4);
-                rgbOut[2] |= (rgbOut[2] >> 4);
-            }
-            
-            /* Add alpha channel if mask plane present */
+            /* Read mask plane if present (comes after all data planes) */
             if (picture->bmhd->masking == mskHasMask) {
-                rgbOut[3] = alphaValues[col];
-                rgbOut += 4;
-            } else {
-                rgbOut += 3;
+                if (picture->bmhd->compression == cmpByteRun1) {
+                    bytesRead = DecompressByteRun1(picture->iff, planeBuffer, rowBytes);
+                    if (bytesRead != rowBytes) {
+                        FreeMem(rValues, width);
+                        FreeMem(gValues, width);
+                        FreeMem(bValues, width);
+                        FreeMem(planeBuffer, rowBytes);
+                        FreeMem(alphaValues, width);
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "ByteRun1 decompression failed for mask");
+                        return RETURN_FAIL;
+                    }
+                } else {
+                    bytesRead = ReadChunkBytes(picture->iff, planeBuffer, rowBytes);
+                    if (bytesRead != rowBytes) {
+                        FreeMem(rValues, width);
+                        FreeMem(gValues, width);
+                        FreeMem(bValues, width);
+                        FreeMem(planeBuffer, rowBytes);
+                        FreeMem(alphaValues, width);
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read mask plane");
+                        return RETURN_FAIL;
+                    }
+                }
+                
+                /* Extract mask bits to alpha channel */
+                for (col = 0; col < width; col++) {
+                    UBYTE byteIndex = col / 8;
+                    UBYTE bitIndex = 7 - (col % 8); /* MSB first */
+                    alphaValues[col] = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 0xFF : 0x00;
+                }
             }
+            
+            /* Write RGB output */
+            for (col = 0; col < width; col++) {
+                rgbOut[0] = rValues[col];
+                rgbOut[1] = gValues[col];
+                rgbOut[2] = bValues[col];
+                
+                if (picture->bmhd->masking == mskHasMask) {
+                    rgbOut[3] = alphaValues[col];
+                    rgbOut += 4;
+                } else {
+                    rgbOut += 3;
+                }
+            }
+            
+            FreeMem(rValues, width);
+            FreeMem(gValues, width);
+            FreeMem(bValues, width);
+        } else {
+            /* Standard ILBM: Build pixel indices and look up in CMAP */
+            /* Clear pixel indices for this row */
+            UBYTE *pixelIndices = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+            if (!pixelIndices) {
+                FreeMem(planeBuffer, rowBytes);
+                if (alphaValues) FreeMem(alphaValues, width);
+                SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate pixel indices");
+                return RETURN_FAIL;
+            }
+            
+            /* Read all data planes for this row (planes 0 through nPlanes-1) */
+            for (plane = 0; plane < depth; plane++) {
+                /* Read/decompress plane data */
+                if (picture->bmhd->compression == cmpByteRun1) {
+                    bytesRead = DecompressByteRun1(picture->iff, planeBuffer, rowBytes);
+                    if (bytesRead != rowBytes) {
+                        FreeMem(pixelIndices, width);
+                        FreeMem(planeBuffer, rowBytes);
+                        if (alphaValues) FreeMem(alphaValues, width);
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "ByteRun1 decompression failed");
+                        return RETURN_FAIL;
+                    }
+                } else {
+                    /* Uncompressed */
+                    bytesRead = ReadChunkBytes(picture->iff, planeBuffer, rowBytes);
+                    if (bytesRead != rowBytes) {
+                        FreeMem(pixelIndices, width);
+                        FreeMem(planeBuffer, rowBytes);
+                        if (alphaValues) FreeMem(alphaValues, width);
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read plane data");
+                        return RETURN_FAIL;
+                    }
+                }
+                
+                /* Extract bits from this plane to build pixel indices */
+                for (col = 0; col < width; col++) {
+                    UBYTE byteIndex = col / 8;
+                    UBYTE bitIndex = 7 - (col % 8); /* MSB first */
+                    UBYTE bit = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 1 : 0;
+                    
+                    if (bit) {
+                        pixelIndices[col] |= (1 << plane);
+                    }
+                }
+            }
+            
+            /* Read mask plane if present (comes after all data planes) */
+            if (picture->bmhd->masking == mskHasMask) {
+                /* Read/decompress mask plane */
+                if (picture->bmhd->compression == cmpByteRun1) {
+                    bytesRead = DecompressByteRun1(picture->iff, planeBuffer, rowBytes);
+                    if (bytesRead != rowBytes) {
+                        FreeMem(pixelIndices, width);
+                        FreeMem(planeBuffer, rowBytes);
+                        FreeMem(alphaValues, width);
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "ByteRun1 decompression failed for mask");
+                        return RETURN_FAIL;
+                    }
+                } else {
+                    bytesRead = ReadChunkBytes(picture->iff, planeBuffer, rowBytes);
+                    if (bytesRead != rowBytes) {
+                        FreeMem(pixelIndices, width);
+                        FreeMem(planeBuffer, rowBytes);
+                        FreeMem(alphaValues, width);
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read mask plane");
+                        return RETURN_FAIL;
+                    }
+                }
+                
+                /* Extract mask bits to alpha channel */
+                for (col = 0; col < width; col++) {
+                    UBYTE byteIndex = col / 8;
+                    UBYTE bitIndex = 7 - (col % 8); /* MSB first */
+                    alphaValues[col] = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 0xFF : 0x00;
+                }
+            }
+            
+            /* Convert pixel indices to RGB using CMAP and store original indices */
+            for (col = 0; col < width; col++) {
+                pixelIndex = pixelIndices[col];
+                
+                /* Clamp to valid CMAP range */
+                if (pixelIndex >= maxColors) {
+                    pixelIndex = (UBYTE)(maxColors - 1);
+                }
+                
+                /* Store original palette index */
+                if (paletteOut) {
+                    *paletteOut++ = pixelIndex;
+                }
+                
+                /* Look up RGB from CMAP */
+                rgbOut[0] = cmapData[pixelIndex * 3];     /* R */
+                rgbOut[1] = cmapData[pixelIndex * 3 + 1]; /* G */
+                rgbOut[2] = cmapData[pixelIndex * 3 + 2]; /* B */
+                
+                /* Handle 4-bit palette scaling if needed */
+                if (picture->cmap && picture->cmap->is4Bit) {
+                    rgbOut[0] |= (rgbOut[0] >> 4);
+                    rgbOut[1] |= (rgbOut[1] >> 4);
+                    rgbOut[2] |= (rgbOut[2] >> 4);
+                }
+                
+                /* Add alpha channel if mask plane present */
+                if (picture->bmhd->masking == mskHasMask) {
+                    rgbOut[3] = alphaValues[col];
+                    rgbOut += 4;
+                } else {
+                    rgbOut += 3;
+                }
+            }
+            
+            FreeMem(pixelIndices, width);
         }
-        
-        FreeMem(pixelIndices, width);
     }
     
     FreeMem(planeBuffer, rowBytes);
