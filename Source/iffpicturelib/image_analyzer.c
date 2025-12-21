@@ -74,9 +74,11 @@ LONG AnalyzeFormat(struct IFFPicture *picture)
 /*
 ** GetOptimalPNGConfig - Get optimal PNG configuration (implementation)
 ** Determines the best PNG color type, bit depth, and other settings
+** opaque: If TRUE, skip transparency for index 0 (legacy behavior).
+**         If FALSE, honor transparentColor including index 0 (ILBM spec).
 ** Returns: RETURN_OK on success, RETURN_FAIL on error
 */
-LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config)
+LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config, BOOL opaque)
 {
     ULONG i;
     ULONG numColors;
@@ -188,26 +190,31 @@ LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config)
             }
             
             /* Only set tRNS if the transparent color is actually used */
-            /* However, if the transparent color is black (index 0) and it's used,
-             * we skip tRNS to make black visible (many IFF files mark black as transparent
-             * but users expect black to be visible in PNG output) */
-            if (transparentColorUsed && transparentIndex != 0) {
-            config->num_trans = 1;
-                config->trans = (UBYTE *)AllocMem(sizeof(UBYTE), MEMF_PUBLIC | MEMF_CLEAR);
-            if (!config->trans) {
-                if (config->palette) {
-                    FreeMem(config->palette, config->num_palette * sizeof(struct PNGColor));
-                    config->palette = NULL;
+            /* Per ILBM specification, when transparentColor is set, that color
+             * register should be ignored (treated as transparent). However, if
+             * opaque flag is set, we skip transparency for index 0 to keep
+             * black visible (legacy behavior). */
+            if (transparentColorUsed) {
+                /* Check if we should skip transparency for index 0 */
+                if (opaque && transparentIndex == 0) {
+                    DEBUG_PRINTF1("DEBUG: GetOptimalPNGConfig - Transparent color index = %ld (black, used in image, skipping tRNS per OPAQUE flag)\n", 
+                                 (ULONG)transparentIndex);
+                } else {
+                    /* Set tRNS for the transparent color index */
+                    config->num_trans = 1;
+                    config->trans = (UBYTE *)AllocMem(sizeof(UBYTE), MEMF_PUBLIC | MEMF_CLEAR);
+                    if (!config->trans) {
+                        if (config->palette) {
+                            FreeMem(config->palette, config->num_palette * sizeof(struct PNGColor));
+                            config->palette = NULL;
+                        }
+                        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate PNG transparency");
+                        return RETURN_FAIL;
+                    }
+                    config->trans[0] = transparentIndex;
+                    DEBUG_PRINTF1("DEBUG: GetOptimalPNGConfig - Transparent color index = %ld (used in image, setting tRNS)\n", 
+                                 (ULONG)transparentIndex);
                 }
-                SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate PNG transparency");
-                return RETURN_FAIL;
-            }
-                config->trans[0] = transparentIndex;
-                DEBUG_PRINTF1("DEBUG: GetOptimalPNGConfig - Transparent color index = %ld (used in image, setting tRNS)\n", 
-                             (ULONG)transparentIndex);
-            } else if (transparentColorUsed && transparentIndex == 0) {
-                DEBUG_PRINTF1("DEBUG: GetOptimalPNGConfig - Transparent color index = %ld (black, used in image, skipping tRNS to keep black visible)\n", 
-                             (ULONG)transparentIndex);
             } else {
                 DEBUG_PRINTF1("DEBUG: GetOptimalPNGConfig - Transparent color index = %ld (not used in image, skipping tRNS)\n", 
                              (ULONG)transparentIndex);

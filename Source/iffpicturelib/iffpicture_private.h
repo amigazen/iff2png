@@ -30,6 +30,15 @@
 #define ID_CMYK    0x434D594BUL  /* 'CMYK' */
 #define ID_DCOL    0x44434F4CUL  /* 'DCOL' */
 #define ID_DPI     0x44504920UL  /* 'DPI ' */
+/* Metadata chunk IDs */
+#define ID_GRAB    0x47524142UL  /* 'GRAB' - hotspot coordinates */
+#define ID_DEST    0x44455354UL  /* 'DEST' - destination merge */
+#define ID_SPRT    0x53505254UL  /* 'SPRT' - sprite precedence */
+#define ID_CRNG    0x43524E47UL  /* 'CRNG' - color range */
+#define ID_COPYRIGHT 0x28632920UL  /* '(c) ' - copyright text */
+#define ID_AUTH    0x41555448UL  /* 'AUTH' - author text */
+#define ID_ANNO    0x414E4E4FUL  /* 'ANNO' - annotation text */
+#define ID_TEXT    0x54455854UL  /* 'TEXT' - unformatted text */
 
 /* Viewport mode flags */
 #define vmLACE              0x0004UL
@@ -91,6 +100,26 @@ struct IFFPicture {
     
     /* FAXX-specific: store original compression type */
     UBYTE faxxCompression;
+    
+    /* Metadata storage - library owns all memory */
+    struct Point2D *grab;              /* GRAB chunk (hotspot) */
+    struct DestMerge *dest;             /* DEST chunk */
+    UWORD *sprt;                        /* SPRT chunk (sprite precedence) */
+    struct CRange *crng;                /* CRNG chunk (first instance) */
+    ULONG crngCount;                    /* Number of CRNG chunks */
+    struct CRange *crngArray;           /* Array of all CRNG chunks */
+    STRPTR copyright;                   /* Copyright chunk */
+    ULONG copyrightSize;                /* Size of copyright string (including null) */
+    STRPTR author;                      /* AUTH chunk */
+    ULONG authorSize;                   /* Size of author string (including null) */
+    STRPTR annotation;                  /* ANNO chunk (first instance) */
+    ULONG annotationCount;              /* Number of ANNO chunks */
+    STRPTR *annotationArray;            /* Array of all ANNO strings */
+    ULONG *annotationSizes;             /* Array of sizes for each ANNO string */
+    STRPTR text;                        /* TEXT chunk (first instance) */
+    ULONG textCount;                    /* Number of TEXT chunks */
+    STRPTR *textArray;                  /* Array of all TEXT strings */
+    ULONG *textSizes;                   /* Array of sizes for each TEXT string */
 };
 
 /* Internal function prototypes - declared in image_decoder.c */
@@ -104,8 +133,9 @@ LONG DecodeRGB8(struct IFFPicture *picture);
 LONG DecodeACBM(struct IFFPicture *picture);
 LONG DecodeFAXX(struct IFFPicture *picture);
 LONG AnalyzeFormat(struct IFFPicture *picture);
-LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config);
+LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config, BOOL opaque);
 VOID SetIFFPictureError(struct IFFPicture *picture, LONG error, const char *message);
+VOID ReadMetadata(struct IFFPicture *picture);
 
 #endif /* IFFPICTURE_PRIVATE_H */
 

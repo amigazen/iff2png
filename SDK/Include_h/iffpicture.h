@@ -23,9 +23,9 @@
 /* Forward declarations for opaque and external types */
 struct IFFPicture;      /* Opaque structure - use accessor functions */
 struct BitMapHeader;    /* Public structure defined below */
-struct ColorMap;        /* Public structure defined below */
-struct PNGConfig;       /* Defined in png_encoder.h from libpng */
-struct IFFHandle;       /* Defined in libraries/iffparse.h */
+struct IFFColorMap;      /* Public structure defined below (renamed from ColorMap to avoid conflict with graphics/view.h) */
+struct PNGConfig;        /* Defined in png_encoder.h from libpng */
+struct IFFHandle;        /* Defined in libraries/iffparse.h */
 
 /*****************************************************************************/
 
@@ -109,12 +109,133 @@ LONG ParseIFFPicture(struct IFFPicture *picture);
  * ReadABIT() - Reads the ABIT (Alpha Bitmap) chunk header information.
  *              Similar to ReadBODY() but for alpha channel data in ACBM
  *              format images.
+ *
+ * Metadata Chunk Reading Functions:
+ *
+ * ReadGRAB() - Reads the GRAB chunk (hotspot coordinates). Returns a pointer
+ *              to a Point2D structure in IFFPicture's memory, or NULL if not
+ *              found. Pointer is valid until FreeIFFPicture() is called.
+ *              Library owns the memory - caller must NOT free.
+ *
+ * ReadDEST() - Reads the DEST chunk (destination merge information). Returns
+ *              a pointer to a DestMerge structure in IFFPicture's memory, or
+ *              NULL if not found. Pointer is valid until FreeIFFPicture() is
+ *              called. Library owns the memory - caller must NOT free.
+ *
+ * ReadSPRT() - Reads the SPRT chunk (sprite precedence). Returns a pointer to
+ *              a UWORD in IFFPicture's memory containing the precedence value,
+ *              or NULL if not found. Precedence 0 is the highest (foremost).
+ *              Pointer is valid until FreeIFFPicture() is called. Library owns
+ *              the memory - caller must NOT free.
+ *
+ * ReadCRNG() - Reads the CRNG chunk (color range, first instance). Returns a
+ *              pointer to a CRange structure in IFFPicture's memory, or NULL
+ *              if not found. Multiple CRNG chunks can exist; this returns the
+ *              first one. Pointer is valid until FreeIFFPicture() is called.
+ *              Library owns the memory - caller must NOT free.
+ *
+ * ReadAllCRNG() - Reads all CRNG chunks. Returns a pointer to a CRangeList
+ *                 structure containing count and array pointer into IFFPicture's
+ *                 memory, or NULL if not found. Pointers are valid until
+ *                 FreeIFFPicture() is called. Library owns the memory - caller
+ *                 must NOT free.
+ *
+ * ReadCopyright() - Reads the Copyright chunk. Returns a pointer to a
+ *                   null-terminated string in IFFPicture's memory, or NULL if
+ *                   not found. Pointer is valid until FreeIFFPicture() is
+ *                   called. Library owns the memory - caller must NOT free.
+ *
+ * ReadAuthor() - Reads the AUTH chunk. Returns a pointer to a null-terminated
+ *                string in IFFPicture's memory, or NULL if not found. Pointer
+ *                is valid until FreeIFFPicture() is called. Library owns the
+ *                memory - caller must NOT free.
+ *
+ * ReadAnnotation() - Reads the ANNO chunk (first instance). Returns a pointer
+ *                    to a null-terminated string in IFFPicture's memory, or
+ *                    NULL if not found. Multiple ANNO chunks can exist; this
+ *                    returns the first one. Pointer is valid until
+ *                    FreeIFFPicture() is called. Library owns the memory -
+ *                    caller must NOT free.
+ *
+ * ReadAllAnnotations() - Reads all ANNO chunks. Returns a pointer to a
+ *                        TextList structure containing count and array pointer
+ *                        into IFFPicture's memory, or NULL if not found.
+ *                        Pointers are valid until FreeIFFPicture() is called.
+ *                        Library owns the memory - caller must NOT free.
+ *
+ * ReadText() - Reads the TEXT chunk (first instance). Returns a pointer to a
+ *              null-terminated string in IFFPicture's memory, or NULL if not
+ *              found. Multiple TEXT chunks can exist; this returns the first
+ *              one. Pointer is valid until FreeIFFPicture() is called. Library
+ *              owns the memory - caller must NOT free.
+ *
+ * ReadAllTexts() - Reads all TEXT chunks. Returns a pointer to a TextList
+ *                  structure containing count and array pointer into
+ *                  IFFPicture's memory, or NULL if not found. Pointers are
+ *                  valid until FreeIFFPicture() is called. Library owns the
+ *                  memory - caller must NOT free.
  */
 LONG ReadBMHD(struct IFFPicture *picture);
 LONG ReadCMAP(struct IFFPicture *picture);
 LONG ReadCAMG(struct IFFPicture *picture);
 LONG ReadBODY(struct IFFPicture *picture);
 LONG ReadABIT(struct IFFPicture *picture);
+
+/* Metadata chunk structures */
+struct Point2D {
+    WORD x, y;  /* relative coordinates (pixels) */
+};
+
+struct DestMerge {
+    UBYTE depth;      /* # bitplanes in the original source */
+    UBYTE pad1;       /* unused; for consistency put 0 here */
+    UWORD planePick;  /* how to scatter source bitplanes into destination */
+    UWORD planeOnOff; /* default bitplane data for planePick */
+    UWORD planeMask;  /* selects which bitplanes to store into */
+};
+
+struct CRange {
+    WORD  pad1;      /* reserved for future use; store 0 here */
+    WORD  rate;      /* color cycle rate */
+    WORD  flags;     /* flags: RNG_ACTIVE (1), RNG_REVERSE (2) */
+    UBYTE low, high; /* lower and upper color registers selected */
+};
+
+/* CRNG flags */
+#define RNG_ACTIVE  1
+#define RNG_REVERSE 2
+
+/* Metadata chunk list structures for multiple instances */
+struct CRangeList {
+    ULONG count;                /* Number of CRange entries */
+    struct CRange *ranges;     /* Array of CRange structures */
+};
+
+struct TextList {
+    ULONG count;                /* Number of text strings */
+    STRPTR *texts;              /* Array of null-terminated strings */
+};
+
+/* Metadata chunk reading functions
+ * 
+ * All functions return pointers into IFFPicture's memory.
+ * Pointers are valid until FreeIFFPicture() is called.
+ * Library owns all memory - caller must NOT free.
+ * 
+ * For chunks that can appear multiple times (CRNG, ANNO, TEXT),
+ * use ReadAllX() functions to get all instances.
+ */
+struct Point2D *ReadGRAB(struct IFFPicture *picture);
+struct DestMerge *ReadDEST(struct IFFPicture *picture);
+UWORD *ReadSPRT(struct IFFPicture *picture);
+struct CRange *ReadCRNG(struct IFFPicture *picture);
+struct CRangeList *ReadAllCRNG(struct IFFPicture *picture);
+STRPTR ReadCopyright(struct IFFPicture *picture);
+STRPTR ReadAuthor(struct IFFPicture *picture);
+STRPTR ReadAnnotation(struct IFFPicture *picture);
+struct TextList *ReadAllAnnotations(struct IFFPicture *picture);
+STRPTR ReadText(struct IFFPicture *picture);
+struct TextList *ReadAllTexts(struct IFFPicture *picture);
 
 /*****************************************************************************/
 
@@ -134,12 +255,21 @@ LONG ReadABIT(struct IFFPicture *picture);
  * GetFormType() - Returns the IFF FORM type identifier (e.g., ID_ILBM, ID_PBM).
  *                 This identifies the image format variant.
  *
- * GetViewportModes() - Returns the Amiga viewport mode flags from the CAMG
- *                      chunk (e.g., HAM, EHB, LACE). Returns 0 if CAMG not present.
+ * GetVPModes() - Returns the Amiga viewport mode flags from the CAMG chunk.
+ *                The returned ULONG contains flags such as vmHAM, vmEXTRA_HALFBRITE,
+ *                vmLACE, vmHIRES, etc. Returns 0 if CAMG chunk is not present.
+ *                This is the raw CAMG value that can be used with BestPictureModeID()
+ *                or for direct mode matching.
  *
- * GetBMHD/ColorMap() - Return pointers to the internal BMHD and ColorMap
- *                      structures. These pointers remain valid until the
- *                      IFFPicture is freed. Returns NULL if not loaded.
+ * GetBMHD() - Return pointer to the internal BMHD structure.
+ *             This pointer remains valid until the IFFPicture is freed.
+ *             Returns NULL if not loaded.
+ *
+ * GetIFFColorMap() - Return pointer to the internal IFFColorMap structure
+ *                    (palette data). This pointer remains valid until the
+ *                    IFFPicture is freed. Returns NULL if not loaded.
+ *                    Note: Renamed from GetColorMap to avoid conflict with
+ *                    graphics.library function.
  *
  * GetPixelData() - Returns a pointer to the decoded pixel data buffer.
  *                  The data format depends on the image type (RGB, indexed, etc.).
@@ -156,9 +286,9 @@ UWORD GetWidth(struct IFFPicture *picture);
 UWORD GetHeight(struct IFFPicture *picture);
 UWORD GetDepth(struct IFFPicture *picture);
 ULONG GetFormType(struct IFFPicture *picture);
-ULONG GetViewportModes(struct IFFPicture *picture);
+ULONG GetVPModes(struct IFFPicture *picture);
 struct BitMapHeader *GetBMHD(struct IFFPicture *picture);
-struct ColorMap *GetColorMap(struct IFFPicture *picture);
+struct IFFColorMap *GetIFFColorMap(struct IFFPicture *picture);
 UBYTE *GetPixelData(struct IFFPicture *picture);
 ULONG GetPixelDataSize(struct IFFPicture *picture);
 BOOL HasAlpha(struct IFFPicture *picture);
@@ -184,9 +314,60 @@ BOOL IsCompressed(struct IFFPicture *picture);
  *                Returns 0 on success or an error code on failure.
  *                Note: The returned rgbData may point to picture->pixelData,
  *                which is freed by FreeIFFPicture(). Do not free it separately.
+ *
+ * DecodeToBitMap() - Decodes the IFF image and creates an Amiga BitMap structure
+ *                    ready for display. The BitMap is allocated using AllocBitMap()
+ *                    with the specified modeID. Supports both planar (bitplane) and
+ *                    chunky (8-bit per pixel) display modes.
+ *                    
+ *                    For planar modes: Converts RGB data directly to bitplanes.
+ *                    For chunky modes: Uses WriteChunkyPixels() if available (V40+),
+ *                    otherwise falls back to direct conversion.
+ *                    
+ *                    The caller is responsible for freeing the BitMap using
+ *                    FreeBitMap() when no longer needed.
+ *                    
+ *                    Parameters:
+ *                    - picture: IFFPicture structure (must be decoded)
+ *                    - modeID: Display mode ID (use BestPictureModeID() to find)
+ *                    - friendBitmap: Optional friend bitmap for efficient allocation
+ *                      (NULL if not needed)
+ *                    
+ *                    Returns: Pointer to allocated BitMap, or NULL on failure.
+ *                    Must be called after Decode() or DecodeToRGB().
+ *
+ * DecodeToRastPort() - Decodes the IFF image and creates an off-screen RastPort
+ *                      with attached BitMap. This is a convenience function that
+ *                      calls DecodeToBitMap() and then initializes a RastPort.
+ *                      
+ *                      The RastPort is allocated and initialized with InitRastPort().
+ *                      The BitMap is attached and ready for rendering operations.
+ *                      
+ *                      The caller is responsible for freeing the RastPort using
+ *                      FreeRastPort() when no longer needed. This will also free
+ *                      the attached BitMap.
+ *                      
+ *                      Parameters:
+ *                      - picture: IFFPicture structure (must be decoded)
+ *                      - modeID: Display mode ID (use BestPictureModeID() to find)
+ *                      - friendBitmap: Optional friend bitmap for efficient allocation
+ *                        (NULL if not needed)
+ *                      
+ *                      Returns: Pointer to allocated RastPort, or NULL on failure.
+ *                      Must be called after Decode() or DecodeToRGB().
+ *
+ * FreeRastPort() - Frees a RastPort and its attached BitMap created by
+ *                  DecodeToRastPort(). This function properly cleans up both
+ *                  the RastPort structure and the BitMap memory.
+ *                  
+ *                  Parameters:
+ *                  - rp: RastPort to free (must have been created by DecodeToRastPort())
  */
 LONG Decode(struct IFFPicture *picture);
 LONG DecodeToRGB(struct IFFPicture *picture, UBYTE **rgbData, ULONG *size);
+struct BitMap *DecodeToBitMap(struct IFFPicture *picture, ULONG modeID, struct BitMap *friendBitmap);
+struct RastPort *DecodeToRastPort(struct IFFPicture *picture, ULONG modeID, struct BitMap *friendBitmap);
+VOID FreeRastPort(struct RastPort *rp);
 
 /*****************************************************************************/
 
@@ -207,10 +388,41 @@ LONG DecodeToRGB(struct IFFPicture *picture, UBYTE **rgbData, ULONG *size);
  *                         allocated palette or transparency data using
  *                         PNGEncoder_FreeConfig(). Must be called after
  *                         AnalyzeFormat() and before DecodeToRGB().
+ *                         
+ *                         The opaque parameter controls transparency handling:
+ *                         - If FALSE (default): Honors transparentColor from BMHD
+ *                           when masking == mskHasTransparentColor, including
+ *                           index 0 (per ILBM specification).
+ *                         - If TRUE: Skips transparency for index 0 to keep
+ *                           black visible (legacy behavior).
+ *                         
  *                         Returns 0 on success or an error code on failure.
+ *
+ * BestPictureModeID() - Determines the best Amiga screenmode for displaying
+ *                      the IFF image. Uses graphics.library BestModeIDA() to
+ *                      find a ModeID that matches the image properties.
+ *                      
+ *                      If a CAMG chunk is present, it uses those viewport
+ *                      mode flags (HAM, EHB, LACE, HIRES) as requirements.
+ *                      If no CAMG chunk exists, it infers requirements from
+ *                      the image properties (width, height, depth).
+ *                      
+ *                      The function takes optional parameters:
+ *                      - sourceViewPort: If provided, matches to the same
+ *                        monitor type as this ViewPort
+ *                      - sourceModeID: If provided, uses this ModeID as
+ *                        the source for matching (alternative to ViewPort)
+ *                      - monitorID: If provided, restricts search to this
+ *                        specific monitor
+ *                      
+ *                      Returns a ModeID on success, or INVALID_ID if no
+ *                      matching screenmode could be found. Must be called
+ *                      after ParseIFFPicture(). The returned ModeID can be
+ *                      used with OpenScreenTagList() or similar functions.
  */
 LONG AnalyzeFormat(struct IFFPicture *picture);
-LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config);
+LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config, BOOL opaque);
+ULONG BestPictureModeID(struct IFFPicture *picture, struct ViewPort *sourceViewPort, ULONG sourceModeID, ULONG monitorID);
 
 /*****************************************************************************/
 
@@ -263,7 +475,7 @@ struct BitMapHeader {
 
 /*****************************************************************************/
 
-/* ColorMap structure - public
+/* IFFColorMap structure - public
  *
  * This structure represents the IFF CMAP (Color Map) chunk containing
  * palette data. The palette consists of RGB triplets stored sequentially
@@ -274,8 +486,11 @@ struct BitMapHeader {
  * The numcolors field indicates how many palette entries are present.
  * Standard palettes have 2^nPlanes colors (e.g., 16 colors for 4 planes,
  * 256 colors for 8 planes).
+ *
+ * Note: Renamed from ColorMap to IFFColorMap to avoid conflict with
+ * graphics/view.h which also defines a ColorMap structure.
  */
-struct ColorMap {
+struct IFFColorMap {
     UBYTE *data;        /* RGB triplets (r, g, b, r, g, b, ...)
                          *   Allocated by the library, freed by FreeIFFPicture() */
     ULONG numcolors;    /* Number of palette entries (colors) */

@@ -113,6 +113,50 @@ VOID FreeIFFPicture(struct IFFPicture *picture)
         picture->paletteIndicesSize = 0;
     }
     
+    /* Free metadata - library owns all memory */
+    if (picture->grab) {
+        FreeMem(picture->grab, sizeof(struct Point2D));
+    }
+    if (picture->dest) {
+        FreeMem(picture->dest, sizeof(struct DestMerge));
+    }
+    if (picture->sprt) {
+        FreeMem(picture->sprt, sizeof(UWORD));
+    }
+    if (picture->crngArray) {
+        FreeMem(picture->crngArray, picture->crngCount * sizeof(struct CRange));
+    }
+    if (picture->copyright) {
+        FreeMem(picture->copyright, picture->copyrightSize);
+    }
+    if (picture->author) {
+        FreeMem(picture->author, picture->authorSize);
+    }
+    if (picture->annotationArray) {
+        ULONG i;
+        for (i = 0; i < picture->annotationCount; i++) {
+            if (picture->annotationArray[i] && picture->annotationSizes) {
+                FreeMem(picture->annotationArray[i], picture->annotationSizes[i]);
+            }
+        }
+        FreeMem(picture->annotationArray, picture->annotationCount * sizeof(STRPTR));
+    }
+    if (picture->annotationSizes) {
+        FreeMem(picture->annotationSizes, picture->annotationCount * sizeof(ULONG));
+    }
+    if (picture->textArray) {
+        ULONG i;
+        for (i = 0; i < picture->textCount; i++) {
+            if (picture->textArray[i] && picture->textSizes) {
+                FreeMem(picture->textArray[i], picture->textSizes[i]);
+            }
+        }
+        FreeMem(picture->textArray, picture->textCount * sizeof(STRPTR));
+    }
+    if (picture->textSizes) {
+        FreeMem(picture->textSizes, picture->textCount * sizeof(ULONG));
+    }
+    
     /* Free picture structure */
     FreeMem(picture, sizeof(struct IFFPicture));
 }
@@ -287,6 +331,16 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
         }
         PropChunk(picture->iff, formType, ID_CMAP);
         PropChunk(picture->iff, formType, ID_CAMG);
+        /* Metadata chunks (optional) - single instance */
+        PropChunk(picture->iff, formType, ID_GRAB);
+        PropChunk(picture->iff, formType, ID_DEST);
+        PropChunk(picture->iff, formType, ID_SPRT);
+        PropChunk(picture->iff, formType, ID_COPYRIGHT);
+        PropChunk(picture->iff, formType, ID_AUTH);
+        /* Metadata chunks that can appear multiple times - use CollectionChunk */
+        CollectionChunk(picture->iff, formType, ID_CRNG);
+        CollectionChunk(picture->iff, formType, ID_ANNO);
+        CollectionChunk(picture->iff, formType, ID_TEXT);
         if ((error = StopChunk(picture->iff, formType, ID_BODY)) != 0) {
             SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set StopChunk for BODY");
             return RETURN_FAIL;
@@ -401,6 +455,9 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
         }
         ReadCMAP(picture); /* CMAP is optional, don't fail if missing */
         ReadCAMG(picture); /* CAMG is optional, don't fail if missing */
+        
+        /* Read and store metadata chunks */
+        ReadMetadata(picture);
         
         /* Read BODY or ABIT chunk depending on format */
         if (formType == ID_ACBM) {
@@ -956,6 +1013,198 @@ LONG ReadPAGE(struct IFFPicture *picture)
     picture->bodyChunkPosition = 0; /* We're positioned at start of PAGE chunk */
     
     return RETURN_OK;
+}
+
+/*
+** ReadMetadata - Read and store all metadata chunks in IFFPicture structure
+** This function is called after ParseIFFPicture() to extract metadata
+** All memory is owned by IFFPicture and freed by FreeIFFPicture()
+*/
+VOID ReadMetadata(struct IFFPicture *picture)
+{
+    struct StoredProperty *sp;
+    struct CollectionItem *ci;
+    ULONG i;
+    ULONG count;
+    UBYTE *src;
+    
+    if (!picture || !picture->iff) {
+        return;
+    }
+    
+    /* Initialize all metadata pointers to NULL */
+    picture->grab = NULL;
+    picture->dest = NULL;
+    picture->sprt = NULL;
+    picture->crng = NULL;
+    picture->crngCount = 0;
+    picture->crngArray = NULL;
+    picture->copyright = NULL;
+    picture->copyrightSize = 0;
+    picture->author = NULL;
+    picture->authorSize = 0;
+    picture->annotation = NULL;
+    picture->annotationCount = 0;
+    picture->annotationArray = NULL;
+    picture->annotationSizes = NULL;
+    picture->text = NULL;
+    picture->textCount = 0;
+    picture->textArray = NULL;
+    picture->textSizes = NULL;
+    
+    /* Read GRAB chunk (single instance) */
+    sp = FindProp(picture->iff, picture->formtype, ID_GRAB);
+    if (sp && sp->sp_Size >= 4) {
+        picture->grab = (struct Point2D *)AllocMem(sizeof(struct Point2D), MEMF_PUBLIC | MEMF_CLEAR);
+        if (picture->grab) {
+            src = (UBYTE *)sp->sp_Data;
+            picture->grab->x = (WORD)((src[0] << 8) | src[1]);
+            picture->grab->y = (WORD)((src[2] << 8) | src[3]);
+        }
+    }
+    
+    /* Read DEST chunk (single instance) */
+    sp = FindProp(picture->iff, picture->formtype, ID_DEST);
+    if (sp && sp->sp_Size >= 8) {
+        picture->dest = (struct DestMerge *)AllocMem(sizeof(struct DestMerge), MEMF_PUBLIC | MEMF_CLEAR);
+        if (picture->dest) {
+            src = (UBYTE *)sp->sp_Data;
+            picture->dest->depth = src[0];
+            picture->dest->pad1 = src[1];
+            picture->dest->planePick = (UWORD)((src[2] << 8) | src[3]);
+            picture->dest->planeOnOff = (UWORD)((src[4] << 8) | src[5]);
+            picture->dest->planeMask = (UWORD)((src[6] << 8) | src[7]);
+        }
+    }
+    
+    /* Read SPRT chunk (single instance) */
+    sp = FindProp(picture->iff, picture->formtype, ID_SPRT);
+    if (sp && sp->sp_Size >= 2) {
+        picture->sprt = (UWORD *)AllocMem(sizeof(UWORD), MEMF_PUBLIC | MEMF_CLEAR);
+        if (picture->sprt) {
+            src = (UBYTE *)sp->sp_Data;
+            *picture->sprt = (UWORD)((src[0] << 8) | src[1]);
+        }
+    }
+    
+    /* Read CRNG chunks (multiple instances via CollectionChunk) */
+    ci = FindCollection(picture->iff, picture->formtype, ID_CRNG);
+    if (ci) {
+        /* Count items in collection */
+        count = 0;
+        while (ci) {
+            count++;
+            ci = ci->ci_Next;
+        }
+        
+        if (count > 0) {
+            picture->crngCount = count;
+            picture->crngArray = (struct CRange *)AllocMem(count * sizeof(struct CRange), MEMF_PUBLIC | MEMF_CLEAR);
+            if (picture->crngArray) {
+                ci = FindCollection(picture->iff, picture->formtype, ID_CRNG);
+                for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                    if (ci->ci_Size >= 8) {
+                        src = (UBYTE *)ci->ci_Data;
+                        picture->crngArray[i].pad1 = (WORD)((src[0] << 8) | src[1]);
+                        picture->crngArray[i].rate = (WORD)((src[2] << 8) | src[3]);
+                        picture->crngArray[i].flags = (WORD)((src[4] << 8) | src[5]);
+                        picture->crngArray[i].low = src[6];
+                        picture->crngArray[i].high = src[7];
+                    }
+                }
+                /* Store first instance pointer for convenience */
+                picture->crng = picture->crngArray;
+            }
+        }
+    }
+    
+    /* Read Copyright chunk (single instance) */
+    sp = FindProp(picture->iff, picture->formtype, ID_COPYRIGHT);
+    if (sp && sp->sp_Size > 0) {
+        picture->copyrightSize = sp->sp_Size + 1;
+        picture->copyright = (STRPTR)AllocMem(picture->copyrightSize, MEMF_PUBLIC | MEMF_CLEAR);
+        if (picture->copyright) {
+            CopyMem(sp->sp_Data, picture->copyright, sp->sp_Size);
+            picture->copyright[sp->sp_Size] = '\0';
+        }
+    }
+    
+    /* Read Author chunk (single instance) */
+    sp = FindProp(picture->iff, picture->formtype, ID_AUTH);
+    if (sp && sp->sp_Size > 0) {
+        picture->authorSize = sp->sp_Size + 1;
+        picture->author = (STRPTR)AllocMem(picture->authorSize, MEMF_PUBLIC | MEMF_CLEAR);
+        if (picture->author) {
+            CopyMem(sp->sp_Data, picture->author, sp->sp_Size);
+            picture->author[sp->sp_Size] = '\0';
+        }
+    }
+    
+    /* Read ANNO chunks (multiple instances via CollectionChunk) */
+    ci = FindCollection(picture->iff, picture->formtype, ID_ANNO);
+    if (ci) {
+        count = 0;
+        while (ci) {
+            count++;
+            ci = ci->ci_Next;
+        }
+        
+        if (count > 0) {
+            picture->annotationCount = count;
+            picture->annotationArray = (STRPTR *)AllocMem(count * sizeof(STRPTR), MEMF_PUBLIC | MEMF_CLEAR);
+            picture->annotationSizes = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+            if (picture->annotationArray && picture->annotationSizes) {
+                ci = FindCollection(picture->iff, picture->formtype, ID_ANNO);
+                for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                    if (ci->ci_Size > 0) {
+                        picture->annotationSizes[i] = ci->ci_Size + 1;
+                        picture->annotationArray[i] = (STRPTR)AllocMem(picture->annotationSizes[i], MEMF_PUBLIC | MEMF_CLEAR);
+                        if (picture->annotationArray[i]) {
+                            CopyMem(ci->ci_Data, picture->annotationArray[i], ci->ci_Size);
+                            picture->annotationArray[i][ci->ci_Size] = '\0';
+                        }
+                    } else {
+                        picture->annotationSizes[i] = 0;
+                    }
+                }
+                /* Store first instance pointer for convenience */
+                picture->annotation = picture->annotationArray[0];
+            }
+        }
+    }
+    
+    /* Read TEXT chunks (multiple instances via CollectionChunk) */
+    ci = FindCollection(picture->iff, picture->formtype, ID_TEXT);
+    if (ci) {
+        count = 0;
+        while (ci) {
+            count++;
+            ci = ci->ci_Next;
+        }
+        
+        if (count > 0) {
+            picture->textCount = count;
+            picture->textArray = (STRPTR *)AllocMem(count * sizeof(STRPTR), MEMF_PUBLIC | MEMF_CLEAR);
+            picture->textSizes = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+            if (picture->textArray && picture->textSizes) {
+                ci = FindCollection(picture->iff, picture->formtype, ID_TEXT);
+                for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                    if (ci->ci_Size > 0) {
+                        picture->textSizes[i] = ci->ci_Size + 1;
+                        picture->textArray[i] = (STRPTR)AllocMem(picture->textSizes[i], MEMF_PUBLIC | MEMF_CLEAR);
+                        if (picture->textArray[i]) {
+                            CopyMem(ci->ci_Data, picture->textArray[i], ci->ci_Size);
+                            picture->textArray[i][ci->ci_Size] = '\0';
+                        }
+                    } else {
+                        picture->textSizes[i] = 0;
+                    }
+                }
+                /* Store first instance pointer for convenience */
+                picture->text = picture->textArray[0];
+            }
+        }
+    }
 }
 
 /*

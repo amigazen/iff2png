@@ -8,17 +8,20 @@
 #include "main.h"
 #include "debug.h"
 
-static const char *verstag = "$VER: iff2png 1.1 (19.12.2025)";
+static const char *verstag = "$VER: iff2png 1.2 (21.12.2025)";
 
-/* Command-line template - two required positional file arguments and optional FORCE and QUIET switches */
-static const char TEMPLATE[] = "SOURCE/A,TARGET/A,FORCE/S,QUIET/S";
+static const char *stack_cookie = "$STACK: 4096";
+
+/* Command-line template - two required positional file arguments and optional FORCE, QUIET, and OPAQUE switches */
+static const char TEMPLATE[] = "SOURCE/A,TARGET/A,FORCE/S,QUIET/S,OPAQUE/S";
 
 /* Usage string */
-static const char USAGE[] = "Usage: iff2png SOURCE/A TARGET/A [FORCE/S] [QUIET/S]\n"
+static const char USAGE[] = "Usage: iff2png SOURCE/A TARGET/A [FORCE/S] [QUIET/S] [OPAQUE/S]\n"
                              "  SOURCE/A - Input IFF image file\n"
                              "  TARGET/A - Output PNG file\n"
                              "  FORCE/S - Overwrite existing output file\n"
-                             "  QUIET/S - Suppress normal output messages\n";
+                             "  QUIET/S - Suppress normal output messages\n"
+                             "  OPAQUE/S - Keep color 0 opaque instead of transparent\n";
 
 /* Library base - needed for proto includes */
 struct Library *IFFParseBase;
@@ -30,7 +33,7 @@ struct Library *IFFParseBase;
 int main(int argc, char **argv)
 {
     struct RDArgs *rdargs;
-    LONG args[4]; /* SOURCE, TARGET, FORCE, QUIET */
+    LONG args[5]; /* SOURCE, TARGET, FORCE, QUIET, OPAQUE */
     char sourceFile[256]; /* Local copy of source filename */
     char targetFile[256]; /* Local copy of target filename */
     struct IFFPicture *picture;
@@ -40,6 +43,7 @@ int main(int argc, char **argv)
     LONG result;
     BOOL forceOverwrite;
     BOOL quiet;
+    BOOL opaque;
     BPTR lock;
     struct FileInfoBlock fib;
     
@@ -64,9 +68,10 @@ int main(int argc, char **argv)
     args[1] = 0; /* TARGET */
     args[2] = 0; /* FORCE (boolean) */
     args[3] = 0; /* QUIET (boolean) */
+    args[4] = 0; /* OPAQUE (boolean) */
     
     /* Parse command-line arguments */
-    /* Template "SOURCE/A,TARGET/A,FORCE/S,QUIET/S" - two required files and optional switches */
+    /* Template "SOURCE/A,TARGET/A,FORCE/S,QUIET/S,OPAQUE/S" - two required files and optional switches */
     rdargs = ReadArgs((STRPTR)TEMPLATE, args, NULL);
     if (!rdargs) {
         /* ReadArgs returns NULL on failure (e.g., missing required /A arguments) */
@@ -98,6 +103,7 @@ int main(int argc, char **argv)
     /* Get switch values (non-zero if set) - these are just booleans, no need to copy */
     forceOverwrite = (args[2] != 0);
     quiet = (args[3] != 0);
+    opaque = (args[4] != 0);
     
     /* Free ReadArgs memory now that we've copied the strings we need */
     FreeArgs(rdargs);
@@ -265,7 +271,7 @@ int main(int argc, char **argv)
         }
         
         /* Get optimal PNG configuration */
-        result = GetOptimalPNGConfig(picture, &config);
+        result = GetOptimalPNGConfig(picture, &config, opaque);
         if (result != RETURN_OK) {
             PutStr("Error: Cannot determine PNG configuration\n");
             CloseIFFPicture(picture);

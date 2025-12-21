@@ -1,0 +1,988 @@
+TABLE OF CONTENTS
+
+iffpicture.library/AllocIFFPicture
+iffpicture.library/FreeIFFPicture
+iffpicture.library/InitIFFPictureasDOS
+iffpicture.library/OpenIFFPicture
+iffpicture.library/CloseIFFPicture
+iffpicture.library/ParseIFFPicture
+iffpicture.library/ReadBMHD
+iffpicture.library/ReadCMAP
+iffpicture.library/ReadCAMG
+iffpicture.library/ReadBODY
+iffpicture.library/ReadABIT
+iffpicture.library/GetIFFHandle
+iffpicture.library/GetWidth
+iffpicture.library/GetHeight
+iffpicture.library/GetDepth
+iffpicture.library/GetFormType
+iffpicture.library/GetVPModes
+iffpicture.library/GetBMHD
+iffpicture.library/GetIFFColorMap
+iffpicture.library/GetPixelData
+iffpicture.library/GetPixelDataSize
+iffpicture.library/HasAlpha
+iffpicture.library/IsHAM
+iffpicture.library/IsEHB
+iffpicture.library/IsCompressed
+iffpicture.library/Decode
+iffpicture.library/DecodeToRGB
+iffpicture.library/DecodeToBitMap
+iffpicture.library/DecodeToRastPort
+iffpicture.library/FreeRastPort
+iffpicture.library/AnalyzeFormat
+iffpicture.library/GetOptimalPNGConfig
+iffpicture.library/BestPictureModeID
+iffpicture.library/GetLastError
+iffpicture.library/GetErrorString
+iffpicture.library/AllocIFFPicture                           iffpicture.library/AllocIFFPicture
+
+   NAME
+	AllocIFFPicture -- create a new IFFPicture structure. (V1.0)
+
+   SYNOPSIS
+	picture = AllocIFFPicture()
+	D0
+
+	struct IFFPicture *AllocIFFPicture(VOID);
+
+   FUNCTION
+	Allocates and initializes a new IFFPicture structure. This function
+	is the only supported way to create an IFFPicture structure since
+	there are private fields that need to be initialized.
+
+   RESULT
+	picture - pointer to IFFPicture structure or NULL if the allocation
+		  failed.
+
+   SEE ALSO
+	FreeIFFPicture(), <iffpicture.h>
+
+iffpicture.library/FreeIFFPicture                         iffpicture.library/FreeIFFPicture
+
+   NAME
+	FreeIFFPicture -- deallocate an IFFPicture structure. (V1.0)
+
+   SYNOPSIS
+	FreeIFFPicture(picture);
+	                  A0
+
+	VOID FreeIFFPicture(struct IFFPicture *);
+
+   FUNCTION
+	Deallocates all resources associated with this IFFPicture structure.
+	The structure MUST have already been closed with CloseIFFPicture().
+	Frees all allocated memory including BMHD, CMAP, and pixel data.
+
+   INPUTS
+	picture - pointer to IFFPicture structure to free. This may be NULL.
+
+   SEE ALSO
+	AllocIFFPicture(), CloseIFFPicture(), <iffpicture.h>
+
+iffpicture.library/InitIFFPictureasDOS           iffpicture.library/InitIFFPictureasDOS
+
+   NAME
+	InitIFFPictureasDOS -- initialize an IFFPicture as a DOS stream. (V1.0)
+
+   SYNOPSIS
+	InitIFFPictureasDOS(picture);
+	                      A0
+
+	VOID InitIFFPictureasDOS(struct IFFPicture *);
+
+   FUNCTION
+	Initializes the IFFPicture to operate on DOS streams. Allocates and
+	initializes an internal IFFHandle structure. The iff_Stream field must
+	be set by the caller after calling Open() to get a BPTR file handle.
+
+	This function follows the iffparse.library pattern where InitIFFasDOS()
+	initializes the IFFHandle but does not open the file. The caller is
+	responsible for opening the file and setting iff_Stream.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   SEE ALSO
+	OpenIFFPicture(), GetIFFHandle(), <iffpicture.h>
+
+iffpicture.library/OpenIFFPicture                     iffpicture.library/OpenIFFPicture
+
+   NAME
+	OpenIFFPicture -- prepare an IFFPicture to read or write a new IFF
+			  stream. (V1.0)
+
+   SYNOPSIS
+	error = OpenIFFPicture(picture, rwMode);
+	D0                      A0      D0
+
+	LONG OpenIFFPicture(struct IFFPicture *, LONG);
+
+   FUNCTION
+	Prepares an IFFPicture to read or write a new IFF stream. The direction
+	of I/O is given by rwMode (IFFF_READ or IFFF_WRITE). The IFFPicture
+	must have been initialized with InitIFFPictureasDOS() and iff_Stream
+	must be set to a valid BPTR file handle before calling this function.
+
+	This function follows the iffparse.library pattern where OpenIFF()
+	prepares the IFF context but does not open the file handle. The caller
+	is responsible for opening the file and setting iff_Stream.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+	rwMode  - IFFF_READ or IFFF_WRITE
+
+   RESULT
+	error - 0 if successful or an IFFPICTURE_#? error code if unsuccessful.
+
+   SEE ALSO
+	CloseIFFPicture(), InitIFFPictureasDOS(), GetIFFHandle(),
+	<iffpicture.h>
+
+iffpicture.library/CloseIFFPicture                   iffpicture.library/CloseIFFPicture
+
+   NAME
+	CloseIFFPicture -- close an IFFPicture context. (V1.0)
+
+   SYNOPSIS
+	CloseIFFPicture(picture);
+	                  A0
+
+	VOID CloseIFFPicture(struct IFFPicture *);
+
+   FUNCTION
+	Completes an IFF read or write operation by closing the IFF context.
+	The IFFHandle structure is freed. The file handle (iff_Stream) is NOT
+	closed - the caller is responsible for closing it with Close(). This
+	matches iffparse.library behavior where CloseIFF() doesn't close the
+	file handle.
+
+	This function can be used for cleanup if a read or write fails partway
+	through.
+
+   INPUTS
+	picture - pointer to IFFPicture structure previously opened with
+		  OpenIFFPicture(). This may be NULL.
+
+   SEE ALSO
+	OpenIFFPicture(), FreeIFFPicture(), <iffpicture.h>
+
+iffpicture.library/ParseIFFPicture                   iffpicture.library/ParseIFFPicture
+
+   NAME
+	ParseIFFPicture -- parse an IFF file structure. (V1.0)
+
+   SYNOPSIS
+	error = ParseIFFPicture(picture);
+	D0                      A0
+
+	LONG ParseIFFPicture(struct IFFPicture *);
+
+   FUNCTION
+	Parses the IFF file structure and reads property chunks (BMHD, CMAP,
+	CAMG, etc.) into the IFFPicture structure. Must be called after
+	OpenIFFPicture(). This function uses iffparse.library's ParseIFF() to
+	traverse the file and store property chunks that were declared with
+	PropChunk().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	error - 0 if successful or an IFFPICTURE_#? error code if unsuccessful.
+
+   SEE ALSO
+	OpenIFFPicture(), ReadBMHD(), ReadCMAP(), ReadCAMG(), <iffpicture.h>
+
+iffpicture.library/ReadBMHD                             iffpicture.library/ReadBMHD
+
+   NAME
+	ReadBMHD -- read BMHD (Bitmap Header) chunk. (V1.0)
+
+   SYNOPSIS
+	error = ReadBMHD(picture);
+	D0                A0
+
+	LONG ReadBMHD(struct IFFPicture *);
+
+   FUNCTION
+	Reads the BMHD (Bitmap Header) chunk and stores it in the IFFPicture
+	structure. This chunk contains image dimensions, bitplane count,
+	compression type, masking, and other metadata. Uses iffparse.library's
+	FindProp() to locate the stored property chunk that was declared with
+	PropChunk() during ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	error - 0 if successful or an IFFPICTURE_#? error code if unsuccessful.
+
+   SEE ALSO
+	ParseIFFPicture(), GetBMHD(), <iffpicture.h>
+
+iffpicture.library/ReadCMAP                             iffpicture.library/ReadCMAP
+
+   NAME
+	ReadCMAP -- read CMAP (Color Map) chunk. (V1.0)
+
+   SYNOPSIS
+	error = ReadCMAP(picture);
+	D0                A0
+
+	LONG ReadCMAP(struct IFFPicture *);
+
+   FUNCTION
+	Reads the CMAP (Color Map) chunk containing palette data. The palette
+	consists of RGB triplets (r, g, b, r, g, b, ...). For 4-bit palettes,
+	colors are automatically scaled to 8-bit. Uses iffparse.library's
+	FindProp() to locate the stored property chunk that was declared with
+	PropChunk() during ParseIFFPicture().
+
+	CMAP is optional for some formats (e.g., DEEP, RGBN, RGB8). If the
+	chunk is not present, this function returns successfully without
+	setting an error.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	error - 0 if successful or an IFFPICTURE_#? error code if unsuccessful.
+
+   SEE ALSO
+	ParseIFFPicture(), GetIFFColorMap(), <iffpicture.h>
+
+iffpicture.library/ReadCAMG                             iffpicture.library/ReadCAMG
+
+   NAME
+	ReadCAMG -- read CAMG (Amiga Viewport Modes) chunk. (V1.0)
+
+   SYNOPSIS
+	error = ReadCAMG(picture);
+	D0                A0
+
+	LONG ReadCAMG(struct IFFPicture *);
+
+   FUNCTION
+	Reads the CAMG (Amiga Viewport Modes) chunk containing display mode
+	flags such as HAM, EHB, LACE, HIRES, etc. Uses iffparse.library's
+	FindProp() to locate the stored property chunk that was declared with
+	PropChunk() during ParseIFFPicture().
+
+	CAMG is optional. If the chunk is not present, this function returns
+	successfully and GetVPModes() will return 0.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	error - 0 if successful or an IFFPICTURE_#? error code if unsuccessful.
+
+   SEE ALSO
+	ParseIFFPicture(), GetVPModes(), <iffpicture.h>
+
+iffpicture.library/ReadBODY                             iffpicture.library/ReadBODY
+
+   NAME
+	ReadBODY -- read BODY chunk header information. (V1.0)
+
+   SYNOPSIS
+	error = ReadBODY(picture);
+	D0                A0
+
+	LONG ReadBODY(struct IFFPicture *);
+
+   FUNCTION
+	Reads the BODY chunk header information. The BODY chunk contains the
+	actual image pixel data. This function stores the chunk size and
+	position for later reading during decoding.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	error - 0 if successful or an IFFPICTURE_#? error code if unsuccessful.
+
+   SEE ALSO
+	ParseIFFPicture(), Decode(), <iffpicture.h>
+
+iffpicture.library/ReadABIT                             iffpicture.library/ReadABIT
+
+   NAME
+	ReadABIT -- read ABIT (Alpha Bitmap) chunk header information. (V1.0)
+
+   SYNOPSIS
+	error = ReadABIT(picture);
+	D0                 A0
+
+	LONG ReadABIT(struct IFFPicture *);
+
+   FUNCTION
+	Reads the ABIT (Alpha Bitmap) chunk header information. Similar to
+	ReadBODY() but for alpha channel data in ACBM format images.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	error - 0 if successful or an IFFPICTURE_#? error code if unsuccessful.
+
+   SEE ALSO
+	ParseIFFPicture(), Decode(), <iffpicture.h>
+
+iffpicture.library/GetIFFHandle                       iffpicture.library/GetIFFHandle
+
+   NAME
+	GetIFFHandle -- get pointer to internal IFFHandle structure. (V1.0)
+
+   SYNOPSIS
+	iff = GetIFFHandle(picture);
+	D0                 A0
+
+	struct IFFHandle *GetIFFHandle(struct IFFPicture *);
+
+   FUNCTION
+	Returns a pointer to the internal IFFHandle structure. This allows the
+	caller to set iff_Stream after calling InitIFFPictureasDOS() and before
+	calling OpenIFFPicture(). Returns NULL if the IFFPicture is not
+	initialized.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	iff - pointer to IFFHandle structure or NULL if not initialized.
+
+   SEE ALSO
+	InitIFFPictureasDOS(), OpenIFFPicture(), <iffpicture.h>
+
+iffpicture.library/GetWidth                             iffpicture.library/GetWidth
+
+   NAME
+	GetWidth -- get image width in pixels. (V1.0)
+
+   SYNOPSIS
+	width = GetWidth(picture);
+	D0              A0
+
+	UWORD GetWidth(struct IFFPicture *);
+
+   FUNCTION
+	Returns the image width in pixels from the BMHD chunk. Return 0 if BMHD
+	is not loaded.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	width - image width in pixels, or 0 if BMHD not loaded.
+
+   SEE ALSO
+	GetHeight(), GetDepth(), GetBMHD(), <iffpicture.h>
+
+iffpicture.library/GetHeight                           iffpicture.library/GetHeight
+
+   NAME
+	GetHeight -- get image height in pixels. (V1.0)
+
+   SYNOPSIS
+	height = GetHeight(picture);
+	D0                A0
+
+	UWORD GetHeight(struct IFFPicture *);
+
+   FUNCTION
+	Returns the image height in pixels from the BMHD chunk. Return 0 if
+	BMHD is not loaded.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	height - image height in pixels, or 0 if BMHD not loaded.
+
+   SEE ALSO
+	GetWidth(), GetDepth(), GetBMHD(), <iffpicture.h>
+
+iffpicture.library/GetDepth                             iffpicture.library/GetDepth
+
+   NAME
+	GetDepth -- get number of bitplanes. (V1.0)
+
+   SYNOPSIS
+	depth = GetDepth(picture);
+	D0               A0
+
+	UWORD GetDepth(struct IFFPicture *);
+
+   FUNCTION
+	Returns the number of bitplanes from the BMHD chunk. Return 0 if BMHD
+	is not loaded.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	depth - number of bitplanes, or 0 if BMHD not loaded.
+
+   SEE ALSO
+	GetWidth(), GetHeight(), GetBMHD(), <iffpicture.h>
+
+iffpicture.library/GetFormType                         iffpicture.library/GetFormType
+
+   NAME
+	GetFormType -- get IFF FORM type identifier. (V1.0)
+
+   SYNOPSIS
+	type = GetFormType(picture);
+	D0                A0
+
+	ULONG GetFormType(struct IFFPicture *);
+
+   FUNCTION
+	Returns the IFF FORM type identifier (e.g., ID_ILBM, ID_PBM, ID_FAXX).
+	This identifies the image format variant.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	type - IFF FORM type identifier, or 0 if not loaded.
+
+   SEE ALSO
+	<iffpicture.h>
+
+iffpicture.library/GetVPModes                           iffpicture.library/GetVPModes
+
+   NAME
+	GetVPModes -- get Amiga viewport mode flags from CAMG chunk. (V1.0)
+
+   SYNOPSIS
+	modes = GetVPModes(picture);
+	D0                 A0
+
+	ULONG GetVPModes(struct IFFPicture *);
+
+   FUNCTION
+	Returns the Amiga viewport mode flags from the CAMG chunk. The returned
+	ULONG contains flags such as vmHAM, vmEXTRA_HALFBRITE, vmLACE, vmHIRES,
+	etc. Returns 0 if CAMG chunk is not present. This is the raw CAMG value
+	that can be used with BestPictureModeID() or for direct mode matching.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	modes - viewport mode flags, or 0 if CAMG not present.
+
+   SEE ALSO
+	ReadCAMG(), BestPictureModeID(), <iffpicture.h>
+
+iffpicture.library/GetBMHD                               iffpicture.library/GetBMHD
+
+   NAME
+	GetBMHD -- get pointer to BitMapHeader structure. (V1.0)
+
+   SYNOPSIS
+	bmhd = GetBMHD(picture);
+	D0                A0
+
+	struct BitMapHeader *GetBMHD(struct IFFPicture *);
+
+   FUNCTION
+	Returns a pointer to the internal BMHD (Bitmap Header) structure. This
+	pointer remains valid until the IFFPicture is freed. Returns NULL if
+	not loaded.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	bmhd - pointer to BitMapHeader structure, or NULL if not loaded.
+
+   SEE ALSO
+	ReadBMHD(), <iffpicture.h>
+
+iffpicture.library/GetIFFColorMap                     iffpicture.library/GetIFFColorMap
+
+   NAME
+	GetIFFColorMap -- get pointer to IFFColorMap structure. (V1.0)
+
+   SYNOPSIS
+	cmap = GetIFFColorMap(picture);
+	D0                  A0
+
+	struct IFFColorMap *GetIFFColorMap(struct IFFPicture *);
+
+   FUNCTION
+	Returns a pointer to the internal IFFColorMap structure (palette data).
+	This pointer remains valid until the IFFPicture is freed. Returns NULL
+	if not loaded.
+
+	Note: Renamed from GetColorMap to avoid conflict with graphics.library
+	function.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	cmap - pointer to IFFColorMap structure, or NULL if not loaded.
+
+   SEE ALSO
+	ReadCMAP(), <iffpicture.h>
+
+iffpicture.library/GetPixelData                         iffpicture.library/GetPixelData
+
+   NAME
+	GetPixelData -- get pointer to decoded pixel data buffer. (V1.0)
+
+   SYNOPSIS
+	data = GetPixelData(picture);
+	D0                 A0
+
+	UBYTE *GetPixelData(struct IFFPicture *);
+
+   FUNCTION
+	Returns a pointer to the decoded pixel data buffer. The data format
+	depends on the image type (RGB, indexed, etc.). Returns NULL if image
+	has not been decoded.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	data - pointer to pixel data buffer, or NULL if not decoded.
+
+   SEE ALSO
+	Decode(), DecodeToRGB(), GetPixelDataSize(), <iffpicture.h>
+
+iffpicture.library/GetPixelDataSize                   iffpicture.library/GetPixelDataSize
+
+   NAME
+	GetPixelDataSize -- get size of decoded pixel data in bytes. (V1.0)
+
+   SYNOPSIS
+	size = GetPixelDataSize(picture);
+	D0                    A0
+
+	ULONG GetPixelDataSize(struct IFFPicture *);
+
+   FUNCTION
+	Returns the size in bytes of the decoded pixel data. This is useful for
+	calculating buffer sizes.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	size - size in bytes of pixel data, or 0 if not decoded.
+
+   SEE ALSO
+	GetPixelData(), Decode(), <iffpicture.h>
+
+iffpicture.library/HasAlpha                             iffpicture.library/HasAlpha
+
+   NAME
+	HasAlpha -- check if image has alpha channel. (V1.0)
+
+   SYNOPSIS
+	hasAlpha = HasAlpha(picture);
+	D0                    A0
+
+	BOOL HasAlpha(struct IFFPicture *);
+
+   FUNCTION
+	Returns TRUE if the image has an alpha channel. This is determined
+	during format analysis.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	hasAlpha - TRUE if image has alpha channel, FALSE otherwise.
+
+   SEE ALSO
+	AnalyzeFormat(), <iffpicture.h>
+
+iffpicture.library/IsHAM                                 iffpicture.library/IsHAM
+
+   NAME
+	IsHAM -- check if image uses HAM mode. (V1.0)
+
+   SYNOPSIS
+	isHAM = IsHAM(picture);
+	D0              A0
+
+	BOOL IsHAM(struct IFFPicture *);
+
+   FUNCTION
+	Returns TRUE if the image uses HAM (Hold And Modify) mode. This is
+	determined from the CAMG chunk or during format analysis.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	isHAM - TRUE if image uses HAM mode, FALSE otherwise.
+
+   SEE ALSO
+	ReadCAMG(), AnalyzeFormat(), <iffpicture.h>
+
+iffpicture.library/IsEHB                                 iffpicture.library/IsEHB
+
+   NAME
+	IsEHB -- check if image uses EHB mode. (V1.0)
+
+   SYNOPSIS
+	isEHB = IsEHB(picture);
+	D0              A0
+
+	BOOL IsEHB(struct IFFPicture *);
+
+   FUNCTION
+	Returns TRUE if the image uses EHB (Extra Half Brite) mode. This is
+	determined from the CAMG chunk or during format analysis.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	isEHB - TRUE if image uses EHB mode, FALSE otherwise.
+
+   SEE ALSO
+	ReadCAMG(), AnalyzeFormat(), <iffpicture.h>
+
+iffpicture.library/IsCompressed                         iffpicture.library/IsCompressed
+
+   NAME
+	IsCompressed -- check if image data is compressed. (V1.0)
+
+   SYNOPSIS
+	isCompressed = IsCompressed(picture);
+	D0                      A0
+
+	BOOL IsCompressed(struct IFFPicture *);
+
+   FUNCTION
+	Returns TRUE if the image data is compressed. This is determined from
+	the BMHD chunk during format analysis.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	isCompressed - TRUE if image is compressed, FALSE otherwise.
+
+   SEE ALSO
+	ReadBMHD(), AnalyzeFormat(), <iffpicture.h>
+
+iffpicture.library/Decode                                 iffpicture.library/Decode
+
+   NAME
+	Decode -- decode IFF image data to internal format. (V1.0)
+
+   SYNOPSIS
+	error = Decode(picture);
+	D0              A0
+
+	LONG Decode(struct IFFPicture *);
+
+   FUNCTION
+	Decodes the IFF image data into an internal format suitable for further
+	processing. Handles all IFF formats (ILBM, PBM, RGBN, RGB8, DEEP,
+	ACBM, FAXX) and compression methods (ByteRun1, Modified Huffman,
+	Modified READ, etc.). Also handles special modes like HAM and EHB.
+	Must be called after ParseIFFPicture().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	error - 0 if successful or an IFFPICTURE_#? error code if unsuccessful.
+
+   SEE ALSO
+	ParseIFFPicture(), DecodeToRGB(), DecodeToBitMap(), <iffpicture.h>
+
+iffpicture.library/DecodeToRGB                         iffpicture.library/DecodeToRGB
+
+   NAME
+	DecodeToRGB -- decode IFF image and convert to RGB format. (V1.0)
+
+   SYNOPSIS
+	error = DecodeToRGB(picture, rgbData, size);
+	D0                      A0      A1      A2
+
+	LONG DecodeToRGB(struct IFFPicture *, UBYTE **, ULONG *);
+
+   FUNCTION
+	Decodes the IFF image and converts it to RGB format. Allocates a buffer
+	containing 24-bit RGB data (r, g, b, r, g, b, ...) suitable for writing
+	to PNG or other RGB-based formats. The caller is responsible for
+	freeing the returned buffer.
+
+	Note: The returned rgbData may point to picture->pixelData, which is
+	freed by FreeIFFPicture(). Do not free it separately.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+	rgbData - pointer to variable to receive RGB data pointer.
+	size    - pointer to variable to receive data size in bytes.
+
+   RESULT
+	error - 0 if successful or an IFFPICTURE_#? error code if unsuccessful.
+
+   SEE ALSO
+	Decode(), FreeIFFPicture(), <iffpicture.h>
+
+iffpicture.library/DecodeToBitMap                     iffpicture.library/DecodeToBitMap
+
+   NAME
+	DecodeToBitMap -- create Amiga BitMap from decoded IFF image. (V1.0)
+
+   SYNOPSIS
+	bitmap = DecodeToBitMap(picture, modeID, friendBitmap);
+	D0                      A0      D0      A1
+
+	struct BitMap *DecodeToBitMap(struct IFFPicture *, ULONG,
+	                               struct BitMap *);
+
+   FUNCTION
+	Decodes the IFF image and creates an Amiga BitMap structure ready for
+	display. The BitMap is allocated using AllocBitMap() with the
+	specified modeID. Supports both planar (bitplane) and chunky (8-bit per
+	pixel) display modes.
+
+	For planar modes: Converts RGB data directly to bitplanes.
+
+	For chunky modes: Uses WriteChunkyPixels() if available (V40+),
+	otherwise falls back to direct conversion.
+
+	The caller is responsible for freeing the BitMap using FreeBitMap()
+	when no longer needed.
+
+   INPUTS
+	picture     - IFFPicture structure (must be decoded).
+	modeID      - Display mode ID (use BestPictureModeID() to find).
+	friendBitmap - Optional friend bitmap for efficient allocation
+		       (NULL if not needed).
+
+   RESULT
+	bitmap - pointer to allocated BitMap, or NULL on failure.
+
+   SEE ALSO
+	Decode(), BestPictureModeID(), FreeBitMap(), DecodeToRastPort(),
+	<iffpicture.h>
+
+iffpicture.library/DecodeToRastPort                 iffpicture.library/DecodeToRastPort
+
+   NAME
+	DecodeToRastPort -- create off-screen RastPort with BitMap from decoded
+			    IFF image. (V1.0)
+
+   SYNOPSIS
+	rp = DecodeToRastPort(picture, modeID, friendBitmap);
+	D0                      A0      D0      A1
+
+	struct RastPort *DecodeToRastPort(struct IFFPicture *, ULONG,
+	                                  struct BitMap *);
+
+   FUNCTION
+	Decodes the IFF image and creates an off-screen RastPort with attached
+	BitMap. This is a convenience function that calls DecodeToBitMap() and
+	then initializes a RastPort.
+
+	The RastPort is allocated and initialized with InitRastPort(). The
+	BitMap is attached and ready for rendering operations.
+
+	The caller is responsible for freeing the RastPort using FreeRastPort()
+	when no longer needed. This will also free the attached BitMap.
+
+   INPUTS
+	picture     - IFFPicture structure (must be decoded).
+	modeID      - Display mode ID (use BestPictureModeID() to find).
+	friendBitmap - Optional friend bitmap for efficient allocation
+		       (NULL if not needed).
+
+   RESULT
+	rp - pointer to allocated RastPort, or NULL on failure.
+
+   SEE ALSO
+	Decode(), DecodeToBitMap(), FreeRastPort(), BestPictureModeID(),
+	<iffpicture.h>
+
+iffpicture.library/FreeRastPort                         iffpicture.library/FreeRastPort
+
+   NAME
+	FreeRastPort -- free RastPort and its attached BitMap. (V1.0)
+
+   SYNOPSIS
+	FreeRastPort(rp);
+	              A0
+
+	VOID FreeRastPort(struct RastPort *);
+
+   FUNCTION
+	Frees a RastPort and its attached BitMap created by DecodeToRastPort().
+	This function properly cleans up both the RastPort structure and the
+	BitMap memory.
+
+   INPUTS
+	rp - RastPort to free (must have been created by DecodeToRastPort()).
+	     This may be NULL.
+
+   SEE ALSO
+	DecodeToRastPort(), <iffpicture.h>
+
+iffpicture.library/AnalyzeFormat                       iffpicture.library/AnalyzeFormat
+
+   NAME
+	AnalyzeFormat -- analyze IFF image format and properties. (V1.0)
+
+   SYNOPSIS
+	error = AnalyzeFormat(picture);
+	D0                    A0
+
+	LONG AnalyzeFormat(struct IFFPicture *);
+
+   FUNCTION
+	Analyzes the loaded IFF image to determine its properties such as
+	color type (indexed, grayscale, RGB), special modes (HAM, EHB),
+	compression, and alpha channel presence. This information is used to
+	optimize PNG encoding.
+
+	Must be called after ParseIFFPicture() and before decoding. This
+	function is optional - Decode() will work without it, but it is needed
+	for GetOptimalPNGConfig().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	error - 0 if successful or an IFFPICTURE_#? error code if unsuccessful.
+
+   SEE ALSO
+	ParseIFFPicture(), GetOptimalPNGConfig(), <iffpicture.h>
+
+iffpicture.library/GetOptimalPNGConfig           iffpicture.library/GetOptimalPNGConfig
+
+   NAME
+	GetOptimalPNGConfig -- determine optimal PNG encoding configuration.
+			       (V1.0)
+
+   SYNOPSIS
+	error = GetOptimalPNGConfig(picture, config);
+	D0                          A0      A1
+
+	LONG GetOptimalPNGConfig(struct IFFPicture *, struct PNGConfig *);
+
+   FUNCTION
+	Determines the optimal PNG encoding configuration for the IFF image.
+	This includes color type, bit depth, palette (if indexed), and
+	transparency settings. The configuration is stored in the provided
+	PNGConfig structure. The caller is responsible for freeing any
+	allocated palette or transparency data using PNGEncoder_FreeConfig().
+
+	Must be called after AnalyzeFormat() and before DecodeToRGB().
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+	config  - pointer to PNGConfig structure to fill.
+
+   RESULT
+	error - 0 if successful or an IFFPICTURE_#? error code if unsuccessful.
+
+   SEE ALSO
+	AnalyzeFormat(), DecodeToRGB(), PNGEncoder_FreeConfig(), <iffpicture.h>
+
+iffpicture.library/BestPictureModeID             iffpicture.library/BestPictureModeID
+
+   NAME
+	BestPictureModeID -- determine best Amiga screenmode for displaying
+			     IFF image. (V1.0)
+
+   SYNOPSIS
+	modeID = BestPictureModeID(picture, sourceViewPort, sourceModeID,
+				   monitorID);
+	D0                      A0      A1              D0          D1
+
+	ULONG BestPictureModeID(struct IFFPicture *, struct ViewPort *,
+				ULONG, ULONG);
+
+   FUNCTION
+	Determines the best Amiga screenmode for displaying the IFF image. Uses
+	graphics.library BestModeIDA() to find a ModeID that matches the image
+	properties.
+
+	If a CAMG chunk is present, it uses those viewport mode flags (HAM,
+	EHB, LACE, HIRES) as requirements. If no CAMG chunk exists, it infers
+	requirements from the image properties (width, height, depth).
+
+	The function verifies that the recommended mode is actually available
+	using ModeNotAvailable() before returning it to the caller.
+
+   INPUTS
+	picture       - pointer to IFFPicture structure (must be parsed).
+	sourceViewPort - Optional ViewPort to match monitor type (NULL if not
+			 used).
+	sourceModeID  - Optional ModeID to use as source (0 if not used,
+			overrides ViewPort).
+	monitorID     - Optional monitor ID to restrict search (0 if not used).
+
+   RESULT
+	modeID - Best matching ModeID, or INVALID_ID if no match found or mode
+		 is not available.
+
+   SEE ALSO
+	ParseIFFPicture(), GetVPModes(), DecodeToBitMap(), <iffpicture.h>
+
+iffpicture.library/GetLastError                       iffpicture.library/GetLastError
+
+   NAME
+	GetLastError -- get last error code. (V1.0)
+
+   SYNOPSIS
+	error = GetLastError(picture);
+	D0                  A0
+
+	LONG GetLastError(struct IFFPicture *);
+
+   FUNCTION
+	Returns the last error code that occurred during an IFFPicture
+	operation. Error codes are negative values (IFFPICTURE_* constants) or
+	0 for success.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	error - error code (IFFPICTURE_* constant) or 0 for success.
+
+   SEE ALSO
+	GetErrorString(), <iffpicture.h>
+
+iffpicture.library/GetErrorString                     iffpicture.library/GetErrorString
+
+   NAME
+	GetErrorString -- get last error message. (V1.0)
+
+   SYNOPSIS
+	message = GetErrorString(picture);
+	D0                     A0
+
+	const char *GetErrorString(struct IFFPicture *);
+
+   FUNCTION
+	Returns a pointer to a null-terminated string describing the last error.
+	The string is stored in the IFFPicture structure and remains valid
+	until the next operation or until the IFFPicture is freed.
+
+   INPUTS
+	picture - pointer to IFFPicture structure.
+
+   RESULT
+	message - pointer to error message string, or "Invalid picture object"
+		  if picture is NULL.
+
+   SEE ALSO
+	GetLastError(), <iffpicture.h>
+

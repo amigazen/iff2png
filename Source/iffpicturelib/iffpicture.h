@@ -109,12 +109,133 @@ LONG ParseIFFPicture(struct IFFPicture *picture);
  * ReadABIT() - Reads the ABIT (Alpha Bitmap) chunk header information.
  *              Similar to ReadBODY() but for alpha channel data in ACBM
  *              format images.
+ *
+ * Metadata Chunk Reading Functions:
+ *
+ * ReadGRAB() - Reads the GRAB chunk (hotspot coordinates). Returns a pointer
+ *              to a Point2D structure in IFFPicture's memory, or NULL if not
+ *              found. Pointer is valid until FreeIFFPicture() is called.
+ *              Library owns the memory - caller must NOT free.
+ *
+ * ReadDEST() - Reads the DEST chunk (destination merge information). Returns
+ *              a pointer to a DestMerge structure in IFFPicture's memory, or
+ *              NULL if not found. Pointer is valid until FreeIFFPicture() is
+ *              called. Library owns the memory - caller must NOT free.
+ *
+ * ReadSPRT() - Reads the SPRT chunk (sprite precedence). Returns a pointer to
+ *              a UWORD in IFFPicture's memory containing the precedence value,
+ *              or NULL if not found. Precedence 0 is the highest (foremost).
+ *              Pointer is valid until FreeIFFPicture() is called. Library owns
+ *              the memory - caller must NOT free.
+ *
+ * ReadCRNG() - Reads the CRNG chunk (color range, first instance). Returns a
+ *              pointer to a CRange structure in IFFPicture's memory, or NULL
+ *              if not found. Multiple CRNG chunks can exist; this returns the
+ *              first one. Pointer is valid until FreeIFFPicture() is called.
+ *              Library owns the memory - caller must NOT free.
+ *
+ * ReadAllCRNG() - Reads all CRNG chunks. Returns a pointer to a CRangeList
+ *                 structure containing count and array pointer into IFFPicture's
+ *                 memory, or NULL if not found. Pointers are valid until
+ *                 FreeIFFPicture() is called. Library owns the memory - caller
+ *                 must NOT free.
+ *
+ * ReadCopyright() - Reads the Copyright chunk. Returns a pointer to a
+ *                   null-terminated string in IFFPicture's memory, or NULL if
+ *                   not found. Pointer is valid until FreeIFFPicture() is
+ *                   called. Library owns the memory - caller must NOT free.
+ *
+ * ReadAuthor() - Reads the AUTH chunk. Returns a pointer to a null-terminated
+ *                string in IFFPicture's memory, or NULL if not found. Pointer
+ *                is valid until FreeIFFPicture() is called. Library owns the
+ *                memory - caller must NOT free.
+ *
+ * ReadAnnotation() - Reads the ANNO chunk (first instance). Returns a pointer
+ *                    to a null-terminated string in IFFPicture's memory, or
+ *                    NULL if not found. Multiple ANNO chunks can exist; this
+ *                    returns the first one. Pointer is valid until
+ *                    FreeIFFPicture() is called. Library owns the memory -
+ *                    caller must NOT free.
+ *
+ * ReadAllAnnotations() - Reads all ANNO chunks. Returns a pointer to a
+ *                        TextList structure containing count and array pointer
+ *                        into IFFPicture's memory, or NULL if not found.
+ *                        Pointers are valid until FreeIFFPicture() is called.
+ *                        Library owns the memory - caller must NOT free.
+ *
+ * ReadText() - Reads the TEXT chunk (first instance). Returns a pointer to a
+ *              null-terminated string in IFFPicture's memory, or NULL if not
+ *              found. Multiple TEXT chunks can exist; this returns the first
+ *              one. Pointer is valid until FreeIFFPicture() is called. Library
+ *              owns the memory - caller must NOT free.
+ *
+ * ReadAllTexts() - Reads all TEXT chunks. Returns a pointer to a TextList
+ *                  structure containing count and array pointer into
+ *                  IFFPicture's memory, or NULL if not found. Pointers are
+ *                  valid until FreeIFFPicture() is called. Library owns the
+ *                  memory - caller must NOT free.
  */
 LONG ReadBMHD(struct IFFPicture *picture);
 LONG ReadCMAP(struct IFFPicture *picture);
 LONG ReadCAMG(struct IFFPicture *picture);
 LONG ReadBODY(struct IFFPicture *picture);
 LONG ReadABIT(struct IFFPicture *picture);
+
+/* Metadata chunk structures */
+struct Point2D {
+    WORD x, y;  /* relative coordinates (pixels) */
+};
+
+struct DestMerge {
+    UBYTE depth;      /* # bitplanes in the original source */
+    UBYTE pad1;       /* unused; for consistency put 0 here */
+    UWORD planePick;  /* how to scatter source bitplanes into destination */
+    UWORD planeOnOff; /* default bitplane data for planePick */
+    UWORD planeMask;  /* selects which bitplanes to store into */
+};
+
+struct CRange {
+    WORD  pad1;      /* reserved for future use; store 0 here */
+    WORD  rate;      /* color cycle rate */
+    WORD  flags;     /* flags: RNG_ACTIVE (1), RNG_REVERSE (2) */
+    UBYTE low, high; /* lower and upper color registers selected */
+};
+
+/* CRNG flags */
+#define RNG_ACTIVE  1
+#define RNG_REVERSE 2
+
+/* Metadata chunk list structures for multiple instances */
+struct CRangeList {
+    ULONG count;                /* Number of CRange entries */
+    struct CRange *ranges;     /* Array of CRange structures */
+};
+
+struct TextList {
+    ULONG count;                /* Number of text strings */
+    STRPTR *texts;              /* Array of null-terminated strings */
+};
+
+/* Metadata chunk reading functions
+ * 
+ * All functions return pointers into IFFPicture's memory.
+ * Pointers are valid until FreeIFFPicture() is called.
+ * Library owns all memory - caller must NOT free.
+ * 
+ * For chunks that can appear multiple times (CRNG, ANNO, TEXT),
+ * use ReadAllX() functions to get all instances.
+ */
+struct Point2D *ReadGRAB(struct IFFPicture *picture);
+struct DestMerge *ReadDEST(struct IFFPicture *picture);
+UWORD *ReadSPRT(struct IFFPicture *picture);
+struct CRange *ReadCRNG(struct IFFPicture *picture);
+struct CRangeList *ReadAllCRNG(struct IFFPicture *picture);
+STRPTR ReadCopyright(struct IFFPicture *picture);
+STRPTR ReadAuthor(struct IFFPicture *picture);
+STRPTR ReadAnnotation(struct IFFPicture *picture);
+struct TextList *ReadAllAnnotations(struct IFFPicture *picture);
+STRPTR ReadText(struct IFFPicture *picture);
+struct TextList *ReadAllTexts(struct IFFPicture *picture);
 
 /*****************************************************************************/
 
@@ -267,6 +388,14 @@ VOID FreeRastPort(struct RastPort *rp);
  *                         allocated palette or transparency data using
  *                         PNGEncoder_FreeConfig(). Must be called after
  *                         AnalyzeFormat() and before DecodeToRGB().
+ *                         
+ *                         The opaque parameter controls transparency handling:
+ *                         - If FALSE (default): Honors transparentColor from BMHD
+ *                           when masking == mskHasTransparentColor, including
+ *                           index 0 (per ILBM specification).
+ *                         - If TRUE: Skips transparency for index 0 to keep
+ *                           black visible (legacy behavior).
+ *                         
  *                         Returns 0 on success or an error code on failure.
  *
  * BestPictureModeID() - Determines the best Amiga screenmode for displaying
@@ -292,7 +421,7 @@ VOID FreeRastPort(struct RastPort *rp);
  *                      used with OpenScreenTagList() or similar functions.
  */
 LONG AnalyzeFormat(struct IFFPicture *picture);
-LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config);
+LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config, BOOL opaque);
 ULONG BestPictureModeID(struct IFFPicture *picture, struct ViewPort *sourceViewPort, ULONG sourceModeID, ULONG monitorID);
 
 /*****************************************************************************/
