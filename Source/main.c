@@ -10,8 +10,9 @@
 
 /* Amiga version strings - kept as static to prevent "unreachable" warnings */
 /* These are referenced by the linker/loader, not by code */
-static const char *verstag = "$VER: iff2png 1.3 (21.12.2025)";
+static const char *verstag = "$VER: iff2png 1.4 (2/1/2025)";
 static const char *stack_cookie = "$STACK: 4096";
+long oslibversion  = 40L; 
 
 /* Command-line template - two required positional file arguments and optional FORCE, QUIET, and OPAQUE switches */
 static const char TEMPLATE[] = "SOURCE/A,TARGET/A,FORCE/S,QUIET/S,OPAQUE/S,STRIP=NOMETADATA/S";
@@ -323,6 +324,18 @@ int main(int argc, char **argv)
         width = GetWidth(picture);
         height = GetHeight(picture);
         depth = GetDepth(picture);
+        
+        /* Check if BMHD is available - required for most operations */
+        if (!bmhd) {
+            PutStr("Error: BMHD chunk not available\n");
+            PNGEncoder_FreeConfig(&config);
+            FreeIFFPicture(picture);
+            if (IFFParseBase) {
+                CloseLibrary(IFFParseBase);
+                IFFParseBase = NULL;
+            }
+            return (int)RETURN_FAIL;
+        }
         
         /* Determine form type name */
         switch (formType) {

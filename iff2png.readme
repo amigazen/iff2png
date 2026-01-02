@@ -2,7 +2,7 @@
   Uploader:     toolkit@amigazen.com
   Author:       amigazen project
   Type:         gfx/conv
-  Version:      1.3
+  Version:      1.4
   Architecture: m68k-amigaos >= 3.1
   Distribution: Aminet
   Kurz:         Konvertiert IFF-Bilder ins PNG-Format
@@ -21,6 +21,7 @@
 
   Requirements:
   - AmigaOS 3.1 or higher
+  - 68020 CPU
 
   Usage:
     iff2png SOURCE TARGET [OPTIONS]
@@ -32,11 +33,11 @@
   Options:
     FORCE - Overwrite existing output file without prompting
     QUIET - Suppress normal output messages
-    OPAQUE - Keep color 0 opaque instead of transparent (legacy behavior)
+    OPAQUE - Keep color 0 opaque instead of transparent
     STRIP or NOMETADATA - Remove metadata from output PNG
 
   Examples:
-    iff2png source.iff ram:target.png
+    iff2png source.iff target.png
     iff2png source.iff target.png FORCE QUIET
     iff2png source.iff target.png OPAQUE
 
