@@ -29,8 +29,30 @@ LONG AnalyzeFormat(struct IFFPicture *picture)
     ULONG i;
     BOOL isGray;
     
-    if (!picture || !picture->isLoaded || !picture->bmhd) {
-        SetIFFPictureError(picture, IFFPICTURE_INVALID, "Picture not loaded or BMHD missing");
+    if (!picture || !picture->isLoaded) {
+        SetIFFPictureError(picture, IFFPICTURE_INVALID, "Picture not loaded");
+        return RETURN_FAIL;
+    }
+    
+    /* YUVN format uses YCHD instead of BMHD */
+    if (picture->formtype == ID_YUVN) {
+        if (!picture->ychd) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "YCHD missing");
+            return RETURN_FAIL;
+        }
+        /* YUVN is not indexed, not compressed (we only support uncompressed) */
+        picture->isIndexed = FALSE;
+        picture->isCompressed = FALSE;
+        picture->isHAM = FALSE;
+        picture->isEHB = FALSE;
+        /* Determine if grayscale based on mode */
+        picture->isGrayscale = (picture->ychd->ychd_Mode == YCHD_MODE_400 || 
+                                 picture->ychd->ychd_Mode == YCHD_MODE_200);
+        return RETURN_OK;
+    }
+    
+    if (!picture->bmhd) {
+        SetIFFPictureError(picture, IFFPICTURE_INVALID, "BMHD missing");
         return RETURN_FAIL;
     }
     
@@ -84,8 +106,35 @@ LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config, B
     ULONG i;
     ULONG numColors;
     
-    if (!picture || !config || !picture->isLoaded || !picture->bmhd) {
+    if (!picture || !config || !picture->isLoaded) {
         SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid parameters for PNG config");
+        return RETURN_FAIL;
+    }
+    
+    /* YUVN format uses YCHD instead of BMHD */
+    if (picture->formtype == ID_YUVN) {
+        if (!picture->ychd) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "YCHD missing");
+            return RETURN_FAIL;
+        }
+        /* YUVN is always RGB (or grayscale) */
+        if (picture->isGrayscale) {
+            config->color_type = PNG_COLOR_TYPE_GRAY;
+            config->bit_depth = 8;
+        } else {
+            config->color_type = PNG_COLOR_TYPE_RGB;
+            config->bit_depth = 8;
+        }
+        config->has_alpha = FALSE;
+        config->palette = NULL;
+        config->num_palette = 0;
+        config->trans = NULL;
+        config->num_trans = 0;
+        return RETURN_OK;
+    }
+    
+    if (!picture->bmhd) {
+        SetIFFPictureError(picture, IFFPICTURE_INVALID, "BMHD missing");
         return RETURN_FAIL;
     }
     
@@ -284,9 +333,9 @@ ULONG BestPictureModeID(struct IFFPicture *picture, struct ViewPort *sourceViewP
     ULONG modeID;
     struct Library *GraphicsBase;
     
-    if (!picture || !picture->isLoaded || !picture->bmhd) {
+    if (!picture || !picture->isLoaded) {
         if (picture) {
-            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Picture not loaded or BMHD missing");
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Picture not loaded");
         }
         return INVALID_ID;
     }
@@ -301,9 +350,26 @@ ULONG BestPictureModeID(struct IFFPicture *picture, struct ViewPort *sourceViewP
     }
     
     /* Get image dimensions and depth */
-    width = picture->bmhd->w;
-    height = picture->bmhd->h;
-    depth = picture->bmhd->nPlanes;
+    if (picture->formtype == ID_YUVN) {
+        if (!picture->ychd) {
+            CloseLibrary(GraphicsBase);
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "YCHD missing");
+            return INVALID_ID;
+        }
+        width = picture->ychd->ychd_Width;
+        height = picture->ychd->ychd_Height;
+        /* YUVN is always 24-bit RGB equivalent */
+        depth = 24;
+    } else {
+        if (!picture->bmhd) {
+            CloseLibrary(GraphicsBase);
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "BMHD missing");
+            return INVALID_ID;
+        }
+        width = picture->bmhd->w;
+        height = picture->bmhd->h;
+        depth = picture->bmhd->nPlanes;
+    }
     
     /* Validate dimensions (BestModeIDA requires non-zero) */
     if (width == 0 || height == 0) {

@@ -2560,3 +2560,337 @@ LONG DecodeFAXX(struct IFFPicture *picture)
     return RETURN_OK;
 }
 
+/*
+** DecodeYUVN - Decode YUVN format to RGB (internal)
+** Returns: RETURN_OK on success, RETURN_FAIL on error
+**
+** YUVN format stores Y (luminance) and optional U, V (color difference) channels.
+** The format supports various subsampling modes:
+** - YCHD_MODE_400: Grayscale (Y only, no U/V)
+** - YCHD_MODE_411: YUV-411 (U and V subsampled 4:1 horizontally)
+** - YCHD_MODE_422: YUV-422 (U and V subsampled 2:1 horizontally)
+** - YCHD_MODE_444: YUV-444 (U and V at full resolution)
+** - YCHD_MODE_200, YCHD_MODE_211, YCHD_MODE_222: Lores versions
+**
+** Y values range from 16 (black) to 235 (white) per CCIR standard.
+** U and V values range from 16 to 240 (128 means 0, subtract 128 for calculations).
+**
+** The chunks must appear in order: DATY, DATU, DATV, DATA (optional alpha).
+*/
+LONG DecodeYUVN(struct IFFPicture *picture)
+{
+    struct YCHDHeader *ychd;
+    UWORD width, height;
+    UWORD row, col;
+    UBYTE *yBuf;
+    UBYTE *uBuf;
+    UBYTE *vBuf;
+    UBYTE *yData;
+    UBYTE *uData;
+    UBYTE *vData;
+    UBYTE *rgbOut;
+    LONG bytesRead;
+    ULONG uBytes, vBytes;
+    ULONG uStep, vStep;
+    UBYTE y, u, v;
+    LONG r, g, b;
+    BOOL isColor;
+    BOOL isLores;
+    
+    if (!picture || !picture->ychd || !picture->iff) {
+        SetIFFPictureError(picture, IFFPICTURE_INVALID, "Missing YCHD or IFF handle for YUVN decoding");
+        return RETURN_FAIL;
+    }
+    
+    ychd = picture->ychd;
+    width = ychd->ychd_Width;
+    height = ychd->ychd_Height;
+    
+    /* Determine if color or grayscale */
+    isColor = (ychd->ychd_Mode != YCHD_MODE_400 && ychd->ychd_Mode != YCHD_MODE_200);
+    isLores = (ychd->ychd_Mode >= YCHD_MODE_200);
+    
+    /* Calculate U and V buffer sizes and step values based on mode */
+    switch (ychd->ychd_Mode) {
+        case YCHD_MODE_400:
+        case YCHD_MODE_200:
+            /* Grayscale - no U/V data */
+            uBytes = 0;
+            vBytes = 0;
+            uStep = 0;
+            vStep = 0;
+            break;
+        case YCHD_MODE_411:
+            /* U and V subsampled 4:1 horizontally */
+            uBytes = width / 4;
+            vBytes = width / 4;
+            uStep = 4;
+            vStep = 4;
+            break;
+        case YCHD_MODE_422:
+        case YCHD_MODE_211:
+            /* U and V subsampled 2:1 horizontally */
+            uBytes = width / 2;
+            vBytes = width / 2;
+            uStep = 2;
+            vStep = 2;
+            break;
+        case YCHD_MODE_444:
+        case YCHD_MODE_222:
+            /* U and V at full resolution */
+            uBytes = width;
+            vBytes = width;
+            uStep = 1;
+            vStep = 1;
+            break;
+        default:
+            SetIFFPictureError(picture, IFFPICTURE_UNSUPPORTED, "Unsupported YUVN mode");
+            return RETURN_FAIL;
+    }
+    
+    /* Allocate buffers for Y, U, V data */
+    yBuf = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+    if (!yBuf) {
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate Y buffer");
+        return RETURN_FAIL;
+    }
+    
+    if (isColor && uBytes > 0) {
+        uBuf = (UBYTE *)AllocMem(uBytes, MEMF_PUBLIC | MEMF_CLEAR);
+        if (!uBuf) {
+            FreeMem(yBuf, width);
+            SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate U buffer");
+            return RETURN_FAIL;
+        }
+    } else {
+        uBuf = NULL;
+    }
+    
+    if (isColor && vBytes > 0) {
+        vBuf = (UBYTE *)AllocMem(vBytes, MEMF_PUBLIC | MEMF_CLEAR);
+        if (!vBuf) {
+            FreeMem(yBuf, width);
+            if (uBuf) FreeMem(uBuf, uBytes);
+            SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate V buffer");
+            return RETURN_FAIL;
+        }
+    } else {
+        vBuf = NULL;
+    }
+    
+    /* Allocate buffers for storing all Y, U, V data */
+    yData = (UBYTE *)AllocMem((ULONG)width * height, MEMF_PUBLIC | MEMF_CLEAR);
+    if (!yData) {
+        FreeMem(yBuf, width);
+        if (uBuf) FreeMem(uBuf, uBytes);
+        if (vBuf) FreeMem(vBuf, vBytes);
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate Y data buffer");
+        return RETURN_FAIL;
+    }
+    
+    if (isColor && uBytes > 0) {
+        uData = (UBYTE *)AllocMem((ULONG)uBytes * height, MEMF_PUBLIC | MEMF_CLEAR);
+        if (!uData) {
+            FreeMem(yBuf, width);
+            FreeMem(yData, (ULONG)width * height);
+            if (uBuf) FreeMem(uBuf, uBytes);
+            if (vBuf) FreeMem(vBuf, vBytes);
+            SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate U data buffer");
+            return RETURN_FAIL;
+        }
+    } else {
+        uData = NULL;
+    }
+    
+    if (isColor && vBytes > 0) {
+        vData = (UBYTE *)AllocMem((ULONG)vBytes * height, MEMF_PUBLIC | MEMF_CLEAR);
+        if (!vData) {
+            FreeMem(yBuf, width);
+            FreeMem(yData, (ULONG)width * height);
+            if (uData) FreeMem(uData, (ULONG)uBytes * height);
+            if (uBuf) FreeMem(uBuf, uBytes);
+            if (vBuf) FreeMem(vBuf, vBytes);
+            SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate V data buffer");
+            return RETURN_FAIL;
+        }
+    } else {
+        vData = NULL;
+    }
+    
+    /* Read all DATY rows */
+    for (row = 0; row < height; row++) {
+        bytesRead = ReadChunkBytes(picture->iff, yBuf, width);
+        if (bytesRead != width) {
+            FreeMem(yBuf, width);
+            FreeMem(yData, (ULONG)width * height);
+            if (uData) FreeMem(uData, (ULONG)uBytes * height);
+            if (vData) FreeMem(vData, (ULONG)vBytes * height);
+            if (uBuf) FreeMem(uBuf, uBytes);
+            if (vBuf) FreeMem(vBuf, vBytes);
+            SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read DATY data");
+            return RETURN_FAIL;
+        }
+        /* Copy row to Y data buffer */
+        CopyMem(yBuf, yData + (ULONG)row * width, width);
+    }
+    
+    /* Parse to DATU chunk if color image */
+    if (isColor && uBytes > 0) {
+        if (ParseIFF(picture->iff, IFFPARSE_STEP) != 0) {
+            FreeMem(yBuf, width);
+            FreeMem(yData, (ULONG)width * height);
+            if (uData) FreeMem(uData, (ULONG)uBytes * height);
+            if (vData) FreeMem(vData, (ULONG)vBytes * height);
+            if (uBuf) FreeMem(uBuf, uBytes);
+            if (vBuf) FreeMem(vBuf, vBytes);
+            SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to find DATU chunk");
+            return RETURN_FAIL;
+        }
+        
+        /* Read all DATU rows */
+        for (row = 0; row < height; row++) {
+            bytesRead = ReadChunkBytes(picture->iff, uBuf, uBytes);
+            if (bytesRead != uBytes) {
+                FreeMem(yBuf, width);
+                FreeMem(yData, (ULONG)width * height);
+                FreeMem(uData, (ULONG)uBytes * height);
+                if (vData) FreeMem(vData, (ULONG)vBytes * height);
+                FreeMem(uBuf, uBytes);
+                if (vBuf) FreeMem(vBuf, vBytes);
+                SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read DATU data");
+                return RETURN_FAIL;
+            }
+            /* Copy row to U data buffer */
+            CopyMem(uBuf, uData + (ULONG)row * uBytes, uBytes);
+        }
+    }
+    
+    /* Parse to DATV chunk if color image */
+    if (isColor && vBytes > 0) {
+        if (ParseIFF(picture->iff, IFFPARSE_STEP) != 0) {
+            FreeMem(yBuf, width);
+            FreeMem(yData, (ULONG)width * height);
+            if (uData) FreeMem(uData, (ULONG)uBytes * height);
+            if (vData) FreeMem(vData, (ULONG)vBytes * height);
+            FreeMem(uBuf, uBytes);
+            if (vBuf) FreeMem(vBuf, vBytes);
+            SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to find DATV chunk");
+            return RETURN_FAIL;
+        }
+        
+        /* Read all DATV rows */
+        for (row = 0; row < height; row++) {
+            bytesRead = ReadChunkBytes(picture->iff, vBuf, vBytes);
+            if (bytesRead != vBytes) {
+                FreeMem(yBuf, width);
+                FreeMem(yData, (ULONG)width * height);
+                if (uData) FreeMem(uData, (ULONG)uBytes * height);
+                FreeMem(vData, (ULONG)vBytes * height);
+                FreeMem(uBuf, uBytes);
+                FreeMem(vBuf, vBytes);
+                SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read DATV data");
+                return RETURN_FAIL;
+            }
+            /* Copy row to V data buffer */
+            CopyMem(vBuf, vData + (ULONG)row * vBytes, vBytes);
+        }
+    }
+    
+    /* Get RGB output buffer */
+    rgbOut = picture->pixelData;
+    
+    /* Convert YUV to RGB for all rows */
+    for (row = 0; row < height; row++) {
+        UBYTE *yRow = yData + (ULONG)row * width;
+        UBYTE *uRow = (uData) ? (uData + (ULONG)row * uBytes) : NULL;
+        UBYTE *vRow = (vData) ? (vData + (ULONG)row * vBytes) : NULL;
+        
+        for (col = 0; col < width; col++) {
+            y = yRow[col];
+            
+            if (isColor) {
+                /* Get U and V values based on subsampling */
+                LONG uSigned, vSigned;
+                
+                if (uRow) {
+                    u = uRow[col / uStep];
+                    /* Convert from CCIR range (16-240, 128=0) to signed (-112 to 112) */
+                    uSigned = (LONG)u - 128;
+                } else {
+                    uSigned = 0;
+                }
+                
+                if (vRow) {
+                    v = vRow[col / vStep];
+                    /* Convert from CCIR range (16-240, 128=0) to signed (-112 to 112) */
+                    vSigned = (LONG)v - 128;
+                } else {
+                    vSigned = 0;
+                }
+                
+                /* Convert YUV to RGB using CCIR-601 coefficients */
+                /* R = Y + 1.140 * V */
+                /* G = Y - 0.396 * U - 0.581 * V */
+                /* B = Y + 2.029 * U */
+                /* Using integer math: multiply by 1000, then divide */
+                r = 1000L * (LONG)y + 1140L * vSigned;
+                g = 1000L * (LONG)y - 396L * uSigned - 581L * vSigned;
+                b = 1000L * (LONG)y + 2029L * uSigned;
+                
+                r /= 1000;
+                g /= 1000;
+                b /= 1000;
+                
+                /* Clamp to 0-255 range */
+                if (r > 255) r = 255;
+                if (r < 0) r = 0;
+                if (g > 255) g = 255;
+                if (g < 0) g = 0;
+                if (b > 255) b = 255;
+                if (b < 0) b = 0;
+                
+                rgbOut[0] = (UBYTE)r;
+                rgbOut[1] = (UBYTE)g;
+                rgbOut[2] = (UBYTE)b;
+            } else {
+                /* Grayscale - Y only, convert to RGB */
+                /* Y is in range 16-235, scale to 0-255 */
+                if (y < 16) {
+                    y = 0;
+                } else if (y > 235) {
+                    y = 255;
+                } else {
+                    /* Scale from 16-235 to 0-255 */
+                    y = (UBYTE)(((LONG)y - 16) * 255 / (235 - 16));
+                }
+                
+                rgbOut[0] = y;
+                rgbOut[1] = y;
+                rgbOut[2] = y;
+            }
+            
+            rgbOut += 3;
+        }
+    }
+    
+    /* Free all buffers */
+    FreeMem(yBuf, width);
+    FreeMem(yData, (ULONG)width * height);
+    if (uData) FreeMem(uData, (ULONG)uBytes * height);
+    if (vData) FreeMem(vData, (ULONG)vBytes * height);
+    if (uBuf) FreeMem(uBuf, uBytes);
+    if (vBuf) FreeMem(vBuf, vBytes);
+    
+    /* Free buffers */
+    FreeMem(yBuf, width);
+    if (uBuf) FreeMem(uBuf, uBytes);
+    if (vBuf) FreeMem(vBuf, vBytes);
+    
+    /* Set format flags */
+    picture->isIndexed = FALSE;
+    picture->isGrayscale = !isColor;
+    picture->isCompressed = FALSE;
+    
+    return RETURN_OK;
+}
+

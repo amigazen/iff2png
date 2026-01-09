@@ -17,12 +17,14 @@ extern struct Library *IFFParseBase;
 
 /* Forward declarations for internal functions */
 LONG ReadBMHD(struct IFFPicture *picture);
+LONG ReadYCHD(struct IFFPicture *picture);
 LONG ReadCMAP(struct IFFPicture *picture);
 LONG ReadCAMG(struct IFFPicture *picture);
 LONG ReadBODY(struct IFFPicture *picture);
 LONG ReadABIT(struct IFFPicture *picture);
 LONG ReadFXHD(struct IFFPicture *picture);
 LONG ReadPAGE(struct IFFPicture *picture);
+static VOID FreeIFFPictureMeta(struct IFFPictureMeta *meta);
 
 /*
 ** AllocIFFPicture - Allocate a new IFFPicture object
@@ -41,6 +43,7 @@ struct IFFPicture *AllocIFFPicture(VOID)
     
     /* Initialize structure */
     picture->bmhd = NULL;
+    picture->ychd = NULL;
     picture->cmap = NULL;
     picture->viewportmodes = 0;
     picture->formtype = 0;
@@ -90,6 +93,12 @@ VOID FreeIFFPicture(struct IFFPicture *picture)
         picture->bmhd = NULL;
     }
     
+    /* Free YUVN header */
+    if (picture->ychd) {
+        FreeMem(picture->ychd, sizeof(struct YCHDHeader));
+        picture->ychd = NULL;
+    }
+    
     /* Free color map */
     if (picture->cmap) {
         if (picture->cmap->data) {
@@ -113,52 +122,144 @@ VOID FreeIFFPicture(struct IFFPicture *picture)
         picture->paletteIndicesSize = 0;
     }
     
-    /* Free metadata - library owns all memory */
-    if (picture->grab) {
-        FreeMem(picture->grab, sizeof(struct Point2D));
-    }
-    if (picture->dest) {
-        FreeMem(picture->dest, sizeof(struct DestMerge));
-    }
-    if (picture->sprt) {
-        FreeMem(picture->sprt, sizeof(UWORD));
-    }
-    if (picture->crngArray) {
-        FreeMem(picture->crngArray, picture->crngCount * sizeof(struct CRange));
-    }
-    if (picture->copyright) {
-        FreeMem(picture->copyright, picture->copyrightSize);
-    }
-    if (picture->author) {
-        FreeMem(picture->author, picture->authorSize);
-    }
-    if (picture->annotationArray) {
-        ULONG i;
-        for (i = 0; i < picture->annotationCount; i++) {
-            if (picture->annotationArray[i] && picture->annotationSizes) {
-                FreeMem(picture->annotationArray[i], picture->annotationSizes[i]);
-            }
-        }
-        FreeMem(picture->annotationArray, picture->annotationCount * sizeof(STRPTR));
-    }
-    if (picture->annotationSizes) {
-        FreeMem(picture->annotationSizes, picture->annotationCount * sizeof(ULONG));
-    }
-    if (picture->textArray) {
-        ULONG i;
-        for (i = 0; i < picture->textCount; i++) {
-            if (picture->textArray[i] && picture->textSizes) {
-                FreeMem(picture->textArray[i], picture->textSizes[i]);
-            }
-        }
-        FreeMem(picture->textArray, picture->textCount * sizeof(STRPTR));
-    }
-    if (picture->textSizes) {
-        FreeMem(picture->textSizes, picture->textCount * sizeof(ULONG));
+    /* Free metadata structure if allocated */
+    if (picture->metadata) {
+        FreeIFFPictureMeta(picture->metadata);
+        picture->metadata = NULL;
     }
     
     /* Free picture structure */
     FreeMem(picture, sizeof(struct IFFPicture));
+}
+
+/*
+** FreeIFFPictureMeta - Free metadata structure and all its contents (internal helper)
+*/
+static VOID FreeIFFPictureMeta(struct IFFPictureMeta *meta)
+{
+    ULONG i;
+    
+    if (!meta) {
+        return;
+    }
+    
+    /* Free standard metadata */
+    if (meta->grab) {
+        FreeMem(meta->grab, sizeof(struct Point2D));
+    }
+    if (meta->dest) {
+        FreeMem(meta->dest, sizeof(struct DestMerge));
+    }
+    if (meta->sprt) {
+        FreeMem(meta->sprt, sizeof(UWORD));
+    }
+    if (meta->crngArray) {
+        FreeMem(meta->crngArray, meta->crngCount * sizeof(struct CRange));
+    }
+    if (meta->copyright) {
+        FreeMem(meta->copyright, meta->copyrightSize);
+    }
+    if (meta->author) {
+        FreeMem(meta->author, meta->authorSize);
+    }
+    if (meta->annotationArray) {
+        for (i = 0; i < meta->annotationCount; i++) {
+            if (meta->annotationArray[i] && meta->annotationSizes) {
+                FreeMem(meta->annotationArray[i], meta->annotationSizes[i]);
+            }
+        }
+        FreeMem(meta->annotationArray, meta->annotationCount * sizeof(STRPTR));
+    }
+    if (meta->annotationSizes) {
+        FreeMem(meta->annotationSizes, meta->annotationCount * sizeof(ULONG));
+    }
+    if (meta->textArray) {
+        for (i = 0; i < meta->textCount; i++) {
+            if (meta->textArray[i] && meta->textSizes) {
+                FreeMem(meta->textArray[i], meta->textSizes[i]);
+            }
+        }
+        FreeMem(meta->textArray, meta->textCount * sizeof(STRPTR));
+    }
+    if (meta->textSizes) {
+        FreeMem(meta->textSizes, meta->textCount * sizeof(ULONG));
+    }
+    /* Free extended metadata */
+    if (meta->exifArray) {
+        for (i = 0; i < meta->exifCount; i++) {
+            if (meta->exifArray[i] && meta->exifSizes) {
+                FreeMem(meta->exifArray[i], meta->exifSizes[i]);
+            }
+        }
+        FreeMem(meta->exifArray, meta->exifCount * sizeof(UBYTE *));
+    }
+    if (meta->exifSizes) {
+        FreeMem(meta->exifSizes, meta->exifCount * sizeof(ULONG));
+    }
+    if (meta->iptcArray) {
+        for (i = 0; i < meta->iptcCount; i++) {
+            if (meta->iptcArray[i] && meta->iptcSizes) {
+                FreeMem(meta->iptcArray[i], meta->iptcSizes[i]);
+            }
+        }
+        FreeMem(meta->iptcArray, meta->iptcCount * sizeof(UBYTE *));
+    }
+    if (meta->iptcSizes) {
+        FreeMem(meta->iptcSizes, meta->iptcCount * sizeof(ULONG));
+    }
+    if (meta->xmp0Array) {
+        for (i = 0; i < meta->xmp0Count; i++) {
+            if (meta->xmp0Array[i] && meta->xmp0Sizes) {
+                FreeMem(meta->xmp0Array[i], meta->xmp0Sizes[i]);
+            }
+        }
+        FreeMem(meta->xmp0Array, meta->xmp0Count * sizeof(UBYTE *));
+    }
+    if (meta->xmp0Sizes) {
+        FreeMem(meta->xmp0Sizes, meta->xmp0Count * sizeof(ULONG));
+    }
+    if (meta->xmp1) {
+        FreeMem(meta->xmp1, meta->xmp1Size);
+    }
+    if (meta->iccpArray) {
+        for (i = 0; i < meta->iccpCount; i++) {
+            if (meta->iccpArray[i] && meta->iccpSizes) {
+                FreeMem(meta->iccpArray[i], meta->iccpSizes[i]);
+            }
+        }
+        FreeMem(meta->iccpArray, meta->iccpCount * sizeof(UBYTE *));
+    }
+    if (meta->iccpSizes) {
+        FreeMem(meta->iccpSizes, meta->iccpCount * sizeof(ULONG));
+    }
+    if (meta->iccnArray) {
+        for (i = 0; i < meta->iccnCount; i++) {
+            if (meta->iccnArray[i] && meta->iccnSizes) {
+                FreeMem(meta->iccnArray[i], meta->iccnSizes[i]);
+            }
+        }
+        FreeMem(meta->iccnArray, meta->iccnCount * sizeof(STRPTR));
+    }
+    if (meta->iccnSizes) {
+        FreeMem(meta->iccnSizes, meta->iccnCount * sizeof(ULONG));
+    }
+    if (meta->geotArray) {
+        for (i = 0; i < meta->geotCount; i++) {
+            if (meta->geotArray[i] && meta->geotSizes) {
+                FreeMem(meta->geotArray[i], meta->geotSizes[i]);
+            }
+        }
+        FreeMem(meta->geotArray, meta->geotCount * sizeof(UBYTE *));
+    }
+    if (meta->geotSizes) {
+        FreeMem(meta->geotSizes, meta->geotCount * sizeof(ULONG));
+    }
+    if (meta->geofArray) {
+        FreeMem(meta->geofArray, meta->geofCount * sizeof(ULONG));
+    }
+    
+    /* Free the metadata structure itself */
+    FreeMem(meta, sizeof(struct IFFPictureMeta));
 }
 
 /*
@@ -341,6 +442,15 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
         CollectionChunk(picture->iff, formType, ID_CRNG);
         CollectionChunk(picture->iff, formType, ID_ANNO);
         CollectionChunk(picture->iff, formType, ID_TEXT);
+        /* Extended metadata chunks - can appear in any FORM type */
+        CollectionChunk(picture->iff, formType, ID_EXIF);
+        CollectionChunk(picture->iff, formType, ID_IPTC);
+        CollectionChunk(picture->iff, formType, ID_XMP0);
+        PropChunk(picture->iff, formType, ID_XMP1);  /* XMP1 may occur only once */
+        CollectionChunk(picture->iff, formType, ID_ICCP);
+        CollectionChunk(picture->iff, formType, ID_ICCN);
+        CollectionChunk(picture->iff, formType, ID_GEOT);
+        CollectionChunk(picture->iff, formType, ID_GEOF);
         if ((error = StopChunk(picture->iff, formType, ID_BODY)) != 0) {
             SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set StopChunk for BODY");
             return RETURN_FAIL;
@@ -353,6 +463,15 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
         }
         PropChunk(picture->iff, formType, ID_CMAP);
         PropChunk(picture->iff, formType, ID_CAMG);
+        /* Extended metadata chunks - can appear in any FORM type */
+        CollectionChunk(picture->iff, formType, ID_EXIF);
+        CollectionChunk(picture->iff, formType, ID_IPTC);
+        CollectionChunk(picture->iff, formType, ID_XMP0);
+        PropChunk(picture->iff, formType, ID_XMP1);  /* XMP1 may occur only once */
+        CollectionChunk(picture->iff, formType, ID_ICCP);
+        CollectionChunk(picture->iff, formType, ID_ICCN);
+        CollectionChunk(picture->iff, formType, ID_GEOT);
+        CollectionChunk(picture->iff, formType, ID_GEOF);
         if ((error = StopChunk(picture->iff, formType, ID_ABIT)) != 0) {
             SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set StopChunk for ABIT");
             return RETURN_FAIL;
@@ -364,8 +483,39 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
             return RETURN_FAIL;
         }
         PropChunk(picture->iff, formType, ID_CMAP); /* Optional for DEEP */
+        /* Extended metadata chunks - can appear in any FORM type */
+        CollectionChunk(picture->iff, formType, ID_EXIF);
+        CollectionChunk(picture->iff, formType, ID_IPTC);
+        CollectionChunk(picture->iff, formType, ID_XMP0);
+        PropChunk(picture->iff, formType, ID_XMP1);  /* XMP1 may occur only once */
+        CollectionChunk(picture->iff, formType, ID_ICCP);
+        CollectionChunk(picture->iff, formType, ID_ICCN);
+        CollectionChunk(picture->iff, formType, ID_GEOT);
+        CollectionChunk(picture->iff, formType, ID_GEOF);
         if ((error = StopChunk(picture->iff, formType, ID_BODY)) != 0) {
             SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set StopChunk for BODY");
+            return RETURN_FAIL;
+        }
+    } else if (formType == ID_YUVN) {
+        /* YUVN uses YCHD header and DATY, DATU, DATV, DATA chunks */
+        if ((error = PropChunk(picture->iff, formType, ID_YCHD)) != 0) {
+            SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set PropChunk for YCHD");
+            return RETURN_FAIL;
+        }
+        PropChunk(picture->iff, formType, ID_AUTH); /* Optional */
+        CollectionChunk(picture->iff, formType, ID_ANNO); /* Optional, can appear multiple times */
+        /* Extended metadata chunks - can appear in any FORM type */
+        CollectionChunk(picture->iff, formType, ID_EXIF);
+        CollectionChunk(picture->iff, formType, ID_IPTC);
+        CollectionChunk(picture->iff, formType, ID_XMP0);
+        PropChunk(picture->iff, formType, ID_XMP1);  /* XMP1 may occur only once */
+        CollectionChunk(picture->iff, formType, ID_ICCP);
+        CollectionChunk(picture->iff, formType, ID_ICCN);
+        CollectionChunk(picture->iff, formType, ID_GEOT);
+        CollectionChunk(picture->iff, formType, ID_GEOF);
+        /* Stop at data chunks - DATY, DATU, DATV, DATA must appear in this order */
+        if ((error = StopChunk(picture->iff, formType, ID_DATY)) != 0) {
+            SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set StopChunk for DATY");
             return RETURN_FAIL;
         }
     } else {
@@ -448,6 +598,17 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
             }
             return RETURN_FAIL; /* Error already set */
         }
+    } else if (formType == ID_YUVN) {
+        /* YUVN uses YCHD header */
+        if (ReadYCHD(picture) != RETURN_OK) {
+            return RETURN_FAIL; /* Error already set */
+        }
+        
+        /* Read and store metadata chunks */
+        ReadAllMeta(picture);
+        
+        /* YUVN data chunks are read during decoding, not during parsing */
+        /* We just need to ensure the YCHD is loaded */
     } else {
         /* ILBM, PBM, RGBN, RGB8, DEEP, ACBM use BMHD */
         if (ReadBMHD(picture) != RETURN_OK) {
@@ -462,7 +623,7 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
         }
         
         /* Read and store metadata chunks */
-        ReadMetadata(picture);
+        ReadAllMeta(picture);
         
         /* Read BODY or ABIT chunk depending on format */
         if (formType == ID_ACBM) {
@@ -499,26 +660,45 @@ struct IFFHandle *GetIFFHandle(struct IFFPicture *picture)
 
 UWORD GetWidth(struct IFFPicture *picture)
 {
-    if (!picture || !picture->bmhd) {
+    if (!picture) {
         return 0;
     }
-    return picture->bmhd->w;
+    if (picture->formtype == ID_YUVN && picture->ychd) {
+        return picture->ychd->ychd_Width;
+    }
+    if (picture->bmhd) {
+        return picture->bmhd->w;
+    }
+    return 0;
 }
 
 UWORD GetHeight(struct IFFPicture *picture)
 {
-    if (!picture || !picture->bmhd) {
+    if (!picture) {
         return 0;
     }
-    return picture->bmhd->h;
+    if (picture->formtype == ID_YUVN && picture->ychd) {
+        return picture->ychd->ychd_Height;
+    }
+    if (picture->bmhd) {
+        return picture->bmhd->h;
+    }
+    return 0;
 }
 
 UWORD GetDepth(struct IFFPicture *picture)
 {
-    if (!picture || !picture->bmhd) {
+    if (!picture) {
         return 0;
     }
-    return picture->bmhd->nPlanes;
+    if (picture->formtype == ID_YUVN) {
+        /* YUVN is always 24-bit RGB equivalent */
+        return 24;
+    }
+    if (picture->bmhd) {
+        return picture->bmhd->nPlanes;
+    }
+    return 0;
 }
 
 ULONG GetFormType(struct IFFPicture *picture)
@@ -555,6 +735,14 @@ struct BitMapHeader *GetBMHD(struct IFFPicture *picture)
         return NULL;
     }
     return picture->bmhd;
+}
+
+struct YCHDHeader *GetYCHD(struct IFFPicture *picture)
+{
+    if (!picture) {
+        return NULL;
+    }
+    return picture->ychd;
 }
 
 struct IFFColorMap *GetIFFColorMap(struct IFFPicture *picture)
@@ -611,6 +799,40 @@ BOOL IsCompressed(struct IFFPicture *picture)
         return FALSE;
     }
     return picture->isCompressed;
+}
+
+/*
+** GetImageInfo - Get all core image properties in a single structure
+** Returns: Pointer to IFFImageInfo structure, or NULL if picture is invalid
+** The structure is allocated statically and remains valid until the next
+** call to GetImageInfo() or until the IFFPicture is freed.
+*/
+struct IFFImageInfo *GetImageInfo(struct IFFPicture *picture)
+{
+    static struct IFFImageInfo info;
+    
+    if (!picture) {
+        return NULL;
+    }
+    
+    /* Populate structure with all core properties */
+    info.width = GetWidth(picture);
+    info.height = GetHeight(picture);
+    info.depth = GetDepth(picture);
+    info.formType = GetFormType(picture);
+    info.viewportModes = GetVPModes(picture);
+    info.compressedSize = picture->bodyChunkSize;      /* Compressed data size (BODY chunk) */
+    info.decodedSize = GetPixelDataSize(picture);      /* Decoded pixel data size */
+    info.hasAlpha = HasAlpha(picture);
+    info.isHAM = IsHAM(picture);
+    info.isEHB = IsEHB(picture);
+    info.isCompressed = IsCompressed(picture);
+    info.isIndexed = picture->isIndexed;
+    info.isGrayscale = picture->isGrayscale;
+    info.isLoaded = picture->isLoaded;
+    info.isDecoded = picture->isDecoded;
+    
+    return &info;
 }
 
 /*
@@ -692,6 +914,90 @@ LONG ReadBMHD(struct IFFPicture *picture)
     picture->bmhd = bmhd;
     picture->isCompressed = (bmhd->compression != cmpNone);
     picture->hasAlpha = (bmhd->masking == mskHasMask);
+    
+    return RETURN_OK;
+}
+
+/*
+** ReadYCHD - Read YCHD chunk (YUVN header)
+** Returns: RETURN_OK on success, RETURN_FAIL on error
+** Follows iffparse.library pattern: FindProp
+*/
+LONG ReadYCHD(struct IFFPicture *picture)
+{
+    struct StoredProperty *sp;
+    struct YCHDHeader *ychd;
+    
+    if (!picture || !picture->iff) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid picture or IFF handle");
+        }
+        return RETURN_FAIL;
+    }
+    
+    /* Find stored YCHD property */
+    sp = FindProp(picture->iff, picture->formtype, ID_YCHD);
+    if (!sp) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "YCHD chunk not found");
+        return RETURN_FAIL;
+    }
+    
+    DEBUG_PRINTF1("DEBUG: ReadYCHD - Found YCHD property, size=%ld\n", sp->sp_Size);
+    
+    /* Check size - YCHD should be 24 bytes */
+    if (sp->sp_Size < 24) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "YCHD chunk too small");
+        return RETURN_FAIL;
+    }
+    
+    /* Allocate YCHD structure - use public memory (not chip RAM) */
+    ychd = (struct YCHDHeader *)AllocMem(sizeof(struct YCHDHeader), MEMF_PUBLIC | MEMF_CLEAR);
+    if (!ychd) {
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate YCHDHeader");
+        return RETURN_FAIL;
+    }
+    
+    /* Read fields individually from byte array to avoid structure alignment issues */
+    /* IFF data is big-endian, Amiga is big-endian, so we can read directly */
+    {
+        UBYTE *src = (UBYTE *)sp->sp_Data;
+        
+        DEBUG_BYTE_ARRAY("YCHD raw data", src, 24);
+        
+        /* Read UWORD fields (big-endian, 2 bytes each) */
+        ychd->ychd_Width = (UWORD)((src[0] << 8) | src[1]);
+        ychd->ychd_Height = (UWORD)((src[2] << 8) | src[3]);
+        ychd->ychd_PageWidth = (UWORD)((src[4] << 8) | src[5]);
+        ychd->ychd_PageHeight = (UWORD)((src[6] << 8) | src[7]);
+        ychd->ychd_LeftEdge = (UWORD)((src[8] << 8) | src[9]);
+        ychd->ychd_TopEdge = (UWORD)((src[10] << 8) | src[11]);
+        
+        /* Read UBYTE fields (1 byte each) */
+        ychd->ychd_AspectX = src[12];
+        ychd->ychd_AspectY = src[13];
+        ychd->ychd_Compress = src[14];
+        ychd->ychd_Flags = src[15];
+        ychd->ychd_Mode = src[16];
+        ychd->ychd_Norm = src[17];
+        
+        /* Read WORD field (big-endian, 2 bytes) */
+        ychd->ychd_reserved2 = (WORD)((src[18] << 8) | src[19]);
+        
+        /* Read LONG field (big-endian, 4 bytes) */
+        ychd->ychd_reserved3 = (LONG)((src[20] << 24) | (src[21] << 16) | (src[22] << 8) | src[23]);
+        
+        DEBUG_PRINTF5("DEBUG: YCHD parsed - Width=%ld Height=%ld Mode=%ld Norm=%ld Compress=%ld\n",
+                      ychd->ychd_Width, ychd->ychd_Height, ychd->ychd_Mode, ychd->ychd_Norm, ychd->ychd_Compress);
+    }
+    
+    /* Store YCHD header */
+    picture->ychd = ychd;
+    
+    /* Check compression - only COMPRESS_NONE is supported */
+    if (ychd->ychd_Compress != YCHD_COMPRESS_NONE) {
+        SetIFFPictureError(picture, IFFPICTURE_UNSUPPORTED, "YUVN compression not supported");
+        return RETURN_FAIL;
+    }
     
     return RETURN_OK;
 }
@@ -1033,14 +1339,51 @@ LONG ReadPAGE(struct IFFPicture *picture)
 }
 
 /*
-** ReadMetadata - Read and store all metadata chunks in IFFPicture structure
+/*
+** AllocIFFPictureMeta - Allocate metadata structure on demand (internal helper)
+** Returns: Pointer to allocated metadata structure or NULL on failure
+*/
+static struct IFFPictureMeta *AllocIFFPictureMeta(VOID)
+{
+    struct IFFPictureMeta *meta;
+    
+    meta = (struct IFFPictureMeta *)AllocMem(sizeof(struct IFFPictureMeta), MEMF_PUBLIC | MEMF_CLEAR);
+    if (!meta) {
+        return NULL;
+    }
+    
+    /* All fields are already cleared by MEMF_CLEAR */
+    return meta;
+}
+
+/*
+** EnsureMeta - Ensure metadata structure exists, allocate if needed (internal helper)
+** Returns: Pointer to metadata structure or NULL on allocation failure
+*/
+static struct IFFPictureMeta *EnsureMeta(struct IFFPicture *picture)
+{
+    if (!picture) {
+        return NULL;
+    }
+    
+    if (!picture->metadata) {
+        picture->metadata = AllocIFFPictureMeta();
+    }
+    
+    return picture->metadata;
+}
+
+/*
+** ReadAllMeta - Read and store all metadata chunks in IFFPicture structure
 ** This function is called after ParseIFFPicture() to extract metadata
 ** All memory is owned by IFFPicture and freed by FreeIFFPicture()
+** Metadata structure is allocated on demand when first metadata chunk is found
 */
-VOID ReadMetadata(struct IFFPicture *picture)
+VOID ReadAllMeta(struct IFFPicture *picture)
 {
     struct StoredProperty *sp;
     struct CollectionItem *ci;
+    struct IFFPictureMeta *meta;
     ULONG i;
     ULONG count;
     UBYTE *src;
@@ -1049,58 +1392,50 @@ VOID ReadMetadata(struct IFFPicture *picture)
         return;
     }
     
-    /* Initialize all metadata pointers to NULL */
-    picture->grab = NULL;
-    picture->dest = NULL;
-    picture->sprt = NULL;
-    picture->crng = NULL;
-    picture->crngCount = 0;
-    picture->crngArray = NULL;
-    picture->copyright = NULL;
-    picture->copyrightSize = 0;
-    picture->author = NULL;
-    picture->authorSize = 0;
-    picture->annotation = NULL;
-    picture->annotationCount = 0;
-    picture->annotationArray = NULL;
-    picture->annotationSizes = NULL;
-    picture->text = NULL;
-    picture->textCount = 0;
-    picture->textArray = NULL;
-    picture->textSizes = NULL;
+    /* Metadata structure will be allocated on demand when first chunk is found */
+    /* All fields in the metadata structure are initialized to NULL/0 by MEMF_CLEAR */
     
     /* Read GRAB chunk (single instance) */
     sp = FindProp(picture->iff, picture->formtype, ID_GRAB);
     if (sp && sp->sp_Size >= 4) {
-        picture->grab = (struct Point2D *)AllocMem(sizeof(struct Point2D), MEMF_PUBLIC | MEMF_CLEAR);
-        if (picture->grab) {
-            src = (UBYTE *)sp->sp_Data;
-            picture->grab->x = (WORD)((src[0] << 8) | src[1]);
-            picture->grab->y = (WORD)((src[2] << 8) | src[3]);
+        meta = EnsureMeta(picture);
+        if (meta) {
+            meta->grab = (struct Point2D *)AllocMem(sizeof(struct Point2D), MEMF_PUBLIC | MEMF_CLEAR);
+            if (meta->grab) {
+                src = (UBYTE *)sp->sp_Data;
+                meta->grab->x = (WORD)((src[0] << 8) | src[1]);
+                meta->grab->y = (WORD)((src[2] << 8) | src[3]);
+            }
         }
     }
     
     /* Read DEST chunk (single instance) */
     sp = FindProp(picture->iff, picture->formtype, ID_DEST);
     if (sp && sp->sp_Size >= 8) {
-        picture->dest = (struct DestMerge *)AllocMem(sizeof(struct DestMerge), MEMF_PUBLIC | MEMF_CLEAR);
-        if (picture->dest) {
-            src = (UBYTE *)sp->sp_Data;
-            picture->dest->depth = src[0];
-            picture->dest->pad1 = src[1];
-            picture->dest->planePick = (UWORD)((src[2] << 8) | src[3]);
-            picture->dest->planeOnOff = (UWORD)((src[4] << 8) | src[5]);
-            picture->dest->planeMask = (UWORD)((src[6] << 8) | src[7]);
+        meta = EnsureMeta(picture);
+        if (meta) {
+            meta->dest = (struct DestMerge *)AllocMem(sizeof(struct DestMerge), MEMF_PUBLIC | MEMF_CLEAR);
+            if (meta->dest) {
+                src = (UBYTE *)sp->sp_Data;
+                meta->dest->depth = src[0];
+                meta->dest->pad1 = src[1];
+                meta->dest->planePick = (UWORD)((src[2] << 8) | src[3]);
+                meta->dest->planeOnOff = (UWORD)((src[4] << 8) | src[5]);
+                meta->dest->planeMask = (UWORD)((src[6] << 8) | src[7]);
+            }
         }
     }
     
     /* Read SPRT chunk (single instance) */
     sp = FindProp(picture->iff, picture->formtype, ID_SPRT);
     if (sp && sp->sp_Size >= 2) {
-        picture->sprt = (UWORD *)AllocMem(sizeof(UWORD), MEMF_PUBLIC | MEMF_CLEAR);
-        if (picture->sprt) {
-            src = (UBYTE *)sp->sp_Data;
-            *picture->sprt = (UWORD)((src[0] << 8) | src[1]);
+        meta = EnsureMeta(picture);
+        if (meta) {
+            meta->sprt = (UWORD *)AllocMem(sizeof(UWORD), MEMF_PUBLIC | MEMF_CLEAR);
+            if (meta->sprt) {
+                src = (UBYTE *)sp->sp_Data;
+                *meta->sprt = (UWORD)((src[0] << 8) | src[1]);
+            }
         }
     }
     
@@ -1115,22 +1450,25 @@ VOID ReadMetadata(struct IFFPicture *picture)
         }
         
         if (count > 0) {
-            picture->crngCount = count;
-            picture->crngArray = (struct CRange *)AllocMem(count * sizeof(struct CRange), MEMF_PUBLIC | MEMF_CLEAR);
-            if (picture->crngArray) {
-                ci = FindCollection(picture->iff, picture->formtype, ID_CRNG);
-                for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
-                    if (ci->ci_Size >= 8) {
-                        src = (UBYTE *)ci->ci_Data;
-                        picture->crngArray[i].pad1 = (WORD)((src[0] << 8) | src[1]);
-                        picture->crngArray[i].rate = (WORD)((src[2] << 8) | src[3]);
-                        picture->crngArray[i].flags = (WORD)((src[4] << 8) | src[5]);
-                        picture->crngArray[i].low = src[6];
-                        picture->crngArray[i].high = src[7];
+            meta = EnsureMeta(picture);
+            if (meta) {
+                meta->crngCount = count;
+                meta->crngArray = (struct CRange *)AllocMem(count * sizeof(struct CRange), MEMF_PUBLIC | MEMF_CLEAR);
+                if (meta->crngArray) {
+                    ci = FindCollection(picture->iff, picture->formtype, ID_CRNG);
+                    for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                        if (ci->ci_Size >= 8) {
+                            src = (UBYTE *)ci->ci_Data;
+                            meta->crngArray[i].pad1 = (WORD)((src[0] << 8) | src[1]);
+                            meta->crngArray[i].rate = (WORD)((src[2] << 8) | src[3]);
+                            meta->crngArray[i].flags = (WORD)((src[4] << 8) | src[5]);
+                            meta->crngArray[i].low = src[6];
+                            meta->crngArray[i].high = src[7];
+                        }
                     }
+                    /* Store first instance pointer for convenience */
+                    meta->crng = meta->crngArray;
                 }
-                /* Store first instance pointer for convenience */
-                picture->crng = picture->crngArray;
             }
         }
     }
@@ -1138,22 +1476,28 @@ VOID ReadMetadata(struct IFFPicture *picture)
     /* Read Copyright chunk (single instance) */
     sp = FindProp(picture->iff, picture->formtype, ID_COPYRIGHT);
     if (sp && sp->sp_Size > 0) {
-        picture->copyrightSize = sp->sp_Size + 1;
-        picture->copyright = (STRPTR)AllocMem(picture->copyrightSize, MEMF_PUBLIC | MEMF_CLEAR);
-        if (picture->copyright) {
-            CopyMem(sp->sp_Data, picture->copyright, sp->sp_Size);
-            picture->copyright[sp->sp_Size] = '\0';
+        meta = EnsureMeta(picture);
+        if (meta) {
+            meta->copyrightSize = sp->sp_Size + 1;
+            meta->copyright = (STRPTR)AllocMem(meta->copyrightSize, MEMF_PUBLIC | MEMF_CLEAR);
+            if (meta->copyright) {
+                CopyMem(sp->sp_Data, meta->copyright, sp->sp_Size);
+                meta->copyright[sp->sp_Size] = '\0';
+            }
         }
     }
     
     /* Read Author chunk (single instance) */
     sp = FindProp(picture->iff, picture->formtype, ID_AUTH);
     if (sp && sp->sp_Size > 0) {
-        picture->authorSize = sp->sp_Size + 1;
-        picture->author = (STRPTR)AllocMem(picture->authorSize, MEMF_PUBLIC | MEMF_CLEAR);
-        if (picture->author) {
-            CopyMem(sp->sp_Data, picture->author, sp->sp_Size);
-            picture->author[sp->sp_Size] = '\0';
+        meta = EnsureMeta(picture);
+        if (meta) {
+            meta->authorSize = sp->sp_Size + 1;
+            meta->author = (STRPTR)AllocMem(meta->authorSize, MEMF_PUBLIC | MEMF_CLEAR);
+            if (meta->author) {
+                CopyMem(sp->sp_Data, meta->author, sp->sp_Size);
+                meta->author[sp->sp_Size] = '\0';
+            }
         }
     }
     
@@ -1167,25 +1511,28 @@ VOID ReadMetadata(struct IFFPicture *picture)
         }
         
         if (count > 0) {
-            picture->annotationCount = count;
-            picture->annotationArray = (STRPTR *)AllocMem(count * sizeof(STRPTR), MEMF_PUBLIC | MEMF_CLEAR);
-            picture->annotationSizes = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
-            if (picture->annotationArray && picture->annotationSizes) {
-                ci = FindCollection(picture->iff, picture->formtype, ID_ANNO);
-                for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
-                    if (ci->ci_Size > 0) {
-                        picture->annotationSizes[i] = ci->ci_Size + 1;
-                        picture->annotationArray[i] = (STRPTR)AllocMem(picture->annotationSizes[i], MEMF_PUBLIC | MEMF_CLEAR);
-                        if (picture->annotationArray[i]) {
-                            CopyMem(ci->ci_Data, picture->annotationArray[i], ci->ci_Size);
-                            picture->annotationArray[i][ci->ci_Size] = '\0';
+            meta = EnsureMeta(picture);
+            if (meta) {
+                meta->annotationCount = count;
+                meta->annotationArray = (STRPTR *)AllocMem(count * sizeof(STRPTR), MEMF_PUBLIC | MEMF_CLEAR);
+                meta->annotationSizes = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+                if (meta->annotationArray && meta->annotationSizes) {
+                    ci = FindCollection(picture->iff, picture->formtype, ID_ANNO);
+                    for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                        if (ci->ci_Size > 0) {
+                            meta->annotationSizes[i] = ci->ci_Size + 1;
+                            meta->annotationArray[i] = (STRPTR)AllocMem(meta->annotationSizes[i], MEMF_PUBLIC | MEMF_CLEAR);
+                            if (meta->annotationArray[i]) {
+                                CopyMem(ci->ci_Data, meta->annotationArray[i], ci->ci_Size);
+                                meta->annotationArray[i][ci->ci_Size] = '\0';
+                            }
+                        } else {
+                            meta->annotationSizes[i] = 0;
                         }
-                    } else {
-                        picture->annotationSizes[i] = 0;
                     }
+                    /* Store first instance pointer for convenience */
+                    meta->annotation = meta->annotationArray[0];
                 }
-                /* Store first instance pointer for convenience */
-                picture->annotation = picture->annotationArray[0];
             }
         }
     }
@@ -1200,25 +1547,289 @@ VOID ReadMetadata(struct IFFPicture *picture)
         }
         
         if (count > 0) {
-            picture->textCount = count;
-            picture->textArray = (STRPTR *)AllocMem(count * sizeof(STRPTR), MEMF_PUBLIC | MEMF_CLEAR);
-            picture->textSizes = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
-            if (picture->textArray && picture->textSizes) {
-                ci = FindCollection(picture->iff, picture->formtype, ID_TEXT);
-                for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
-                    if (ci->ci_Size > 0) {
-                        picture->textSizes[i] = ci->ci_Size + 1;
-                        picture->textArray[i] = (STRPTR)AllocMem(picture->textSizes[i], MEMF_PUBLIC | MEMF_CLEAR);
-                        if (picture->textArray[i]) {
-                            CopyMem(ci->ci_Data, picture->textArray[i], ci->ci_Size);
-                            picture->textArray[i][ci->ci_Size] = '\0';
+            meta = EnsureMeta(picture);
+            if (meta) {
+                meta->textCount = count;
+                meta->textArray = (STRPTR *)AllocMem(count * sizeof(STRPTR), MEMF_PUBLIC | MEMF_CLEAR);
+                meta->textSizes = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+                if (meta->textArray && meta->textSizes) {
+                    ci = FindCollection(picture->iff, picture->formtype, ID_TEXT);
+                    for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                        if (ci->ci_Size > 0) {
+                            meta->textSizes[i] = ci->ci_Size + 1;
+                            meta->textArray[i] = (STRPTR)AllocMem(meta->textSizes[i], MEMF_PUBLIC | MEMF_CLEAR);
+                            if (meta->textArray[i]) {
+                                CopyMem(ci->ci_Data, meta->textArray[i], ci->ci_Size);
+                                meta->textArray[i][ci->ci_Size] = '\0';
+                            }
+                        } else {
+                            meta->textSizes[i] = 0;
                         }
-                    } else {
-                        picture->textSizes[i] = 0;
                     }
+                    /* Store first instance pointer for convenience */
+                    meta->text = meta->textArray[0];
                 }
-                /* Store first instance pointer for convenience */
-                picture->text = picture->textArray[0];
+            }
+        }
+    }
+    
+    /* Read EXIF chunks (multiple instances via CollectionChunk) */
+    ci = FindCollection(picture->iff, picture->formtype, ID_EXIF);
+    if (ci) {
+        count = 0;
+        while (ci) {
+            count++;
+            ci = ci->ci_Next;
+        }
+        
+        if (count > 0) {
+            meta = EnsureMeta(picture);
+            if (meta) {
+                meta->exifCount = count;
+                meta->exifArray = (UBYTE **)AllocMem(count * sizeof(UBYTE *), MEMF_PUBLIC | MEMF_CLEAR);
+                meta->exifSizes = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+                if (meta->exifArray && meta->exifSizes) {
+                    ci = FindCollection(picture->iff, picture->formtype, ID_EXIF);
+                    for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                        if (ci->ci_Size > 0) {
+                            meta->exifSizes[i] = ci->ci_Size;
+                            meta->exifArray[i] = (UBYTE *)AllocMem(ci->ci_Size, MEMF_PUBLIC | MEMF_CLEAR);
+                            if (meta->exifArray[i]) {
+                                CopyMem(ci->ci_Data, meta->exifArray[i], ci->ci_Size);
+                            }
+                        } else {
+                            meta->exifSizes[i] = 0;
+                        }
+                    }
+                    /* Store first instance pointer for convenience */
+                    meta->exif = meta->exifArray[0];
+                    meta->exifSize = meta->exifSizes[0];
+                }
+            }
+        }
+    }
+    
+    /* Read IPTC chunks (multiple instances via CollectionChunk) */
+    ci = FindCollection(picture->iff, picture->formtype, ID_IPTC);
+    if (ci) {
+        count = 0;
+        while (ci) {
+            count++;
+            ci = ci->ci_Next;
+        }
+        
+        if (count > 0) {
+            meta = EnsureMeta(picture);
+            if (meta) {
+                meta->iptcCount = count;
+                meta->iptcArray = (UBYTE **)AllocMem(count * sizeof(UBYTE *), MEMF_PUBLIC | MEMF_CLEAR);
+                meta->iptcSizes = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+                if (meta->iptcArray && meta->iptcSizes) {
+                    ci = FindCollection(picture->iff, picture->formtype, ID_IPTC);
+                    for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                        if (ci->ci_Size > 0) {
+                            meta->iptcSizes[i] = ci->ci_Size;
+                            meta->iptcArray[i] = (UBYTE *)AllocMem(ci->ci_Size, MEMF_PUBLIC | MEMF_CLEAR);
+                            if (meta->iptcArray[i]) {
+                                CopyMem(ci->ci_Data, meta->iptcArray[i], ci->ci_Size);
+                            }
+                        } else {
+                            meta->iptcSizes[i] = 0;
+                        }
+                    }
+                    /* Store first instance pointer for convenience */
+                    meta->iptc = meta->iptcArray[0];
+                    meta->iptcSize = meta->iptcSizes[0];
+                }
+            }
+        }
+    }
+    
+    /* Read XMP0 chunks (multiple instances via CollectionChunk) */
+    ci = FindCollection(picture->iff, picture->formtype, ID_XMP0);
+    if (ci) {
+        count = 0;
+        while (ci) {
+            count++;
+            ci = ci->ci_Next;
+        }
+        
+        if (count > 0) {
+            meta = EnsureMeta(picture);
+            if (meta) {
+                meta->xmp0Count = count;
+                meta->xmp0Array = (UBYTE **)AllocMem(count * sizeof(UBYTE *), MEMF_PUBLIC | MEMF_CLEAR);
+                meta->xmp0Sizes = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+                if (meta->xmp0Array && meta->xmp0Sizes) {
+                    ci = FindCollection(picture->iff, picture->formtype, ID_XMP0);
+                    for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                        if (ci->ci_Size > 0) {
+                            meta->xmp0Sizes[i] = ci->ci_Size;
+                            meta->xmp0Array[i] = (UBYTE *)AllocMem(ci->ci_Size, MEMF_PUBLIC | MEMF_CLEAR);
+                            if (meta->xmp0Array[i]) {
+                                CopyMem(ci->ci_Data, meta->xmp0Array[i], ci->ci_Size);
+                            }
+                        } else {
+                            meta->xmp0Sizes[i] = 0;
+                        }
+                    }
+                    /* Store first instance pointer for convenience */
+                    meta->xmp0 = meta->xmp0Array[0];
+                    meta->xmp0Size = meta->xmp0Sizes[0];
+                }
+            }
+        }
+    }
+    
+    /* Read XMP1 chunk (single instance) */
+    sp = FindProp(picture->iff, picture->formtype, ID_XMP1);
+    if (sp && sp->sp_Size > 0) {
+        meta = EnsureMeta(picture);
+        if (meta) {
+            meta->xmp1Size = sp->sp_Size;
+            meta->xmp1 = (UBYTE *)AllocMem(meta->xmp1Size, MEMF_PUBLIC | MEMF_CLEAR);
+            if (meta->xmp1) {
+                CopyMem(sp->sp_Data, meta->xmp1, sp->sp_Size);
+            }
+        }
+    }
+    
+    /* Read ICCP chunks (multiple instances via CollectionChunk) */
+    ci = FindCollection(picture->iff, picture->formtype, ID_ICCP);
+    if (ci) {
+        count = 0;
+        while (ci) {
+            count++;
+            ci = ci->ci_Next;
+        }
+        
+        if (count > 0) {
+            meta = EnsureMeta(picture);
+            if (meta) {
+                meta->iccpCount = count;
+                meta->iccpArray = (UBYTE **)AllocMem(count * sizeof(UBYTE *), MEMF_PUBLIC | MEMF_CLEAR);
+                meta->iccpSizes = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+                if (meta->iccpArray && meta->iccpSizes) {
+                    ci = FindCollection(picture->iff, picture->formtype, ID_ICCP);
+                    for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                        if (ci->ci_Size > 0) {
+                            meta->iccpSizes[i] = ci->ci_Size;
+                            meta->iccpArray[i] = (UBYTE *)AllocMem(ci->ci_Size, MEMF_PUBLIC | MEMF_CLEAR);
+                            if (meta->iccpArray[i]) {
+                                CopyMem(ci->ci_Data, meta->iccpArray[i], ci->ci_Size);
+                            }
+                        } else {
+                            meta->iccpSizes[i] = 0;
+                        }
+                    }
+                    /* Store first instance pointer for convenience */
+                    meta->iccp = meta->iccpArray[0];
+                    meta->iccpSize = meta->iccpSizes[0];
+                }
+            }
+        }
+    }
+    
+    /* Read ICCN chunks (multiple instances via CollectionChunk) */
+    ci = FindCollection(picture->iff, picture->formtype, ID_ICCN);
+    if (ci) {
+        count = 0;
+        while (ci) {
+            count++;
+            ci = ci->ci_Next;
+        }
+        
+        if (count > 0) {
+            meta = EnsureMeta(picture);
+            if (meta) {
+                meta->iccnCount = count;
+                meta->iccnArray = (STRPTR *)AllocMem(count * sizeof(STRPTR), MEMF_PUBLIC | MEMF_CLEAR);
+                meta->iccnSizes = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+                if (meta->iccnArray && meta->iccnSizes) {
+                    ci = FindCollection(picture->iff, picture->formtype, ID_ICCN);
+                    for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                        if (ci->ci_Size > 0) {
+                            meta->iccnSizes[i] = ci->ci_Size + 1;
+                            meta->iccnArray[i] = (STRPTR)AllocMem(meta->iccnSizes[i], MEMF_PUBLIC | MEMF_CLEAR);
+                            if (meta->iccnArray[i]) {
+                                CopyMem(ci->ci_Data, meta->iccnArray[i], ci->ci_Size);
+                                meta->iccnArray[i][ci->ci_Size] = '\0';
+                            }
+                        } else {
+                            meta->iccnSizes[i] = 0;
+                        }
+                    }
+                    /* Store first instance pointer for convenience */
+                    meta->iccn = meta->iccnArray[0];
+                    meta->iccnSize = meta->iccnSizes[0];
+                }
+            }
+        }
+    }
+    
+    /* Read GEOT chunks (multiple instances via CollectionChunk) */
+    ci = FindCollection(picture->iff, picture->formtype, ID_GEOT);
+    if (ci) {
+        count = 0;
+        while (ci) {
+            count++;
+            ci = ci->ci_Next;
+        }
+        
+        if (count > 0) {
+            meta = EnsureMeta(picture);
+            if (meta) {
+                meta->geotCount = count;
+                meta->geotArray = (UBYTE **)AllocMem(count * sizeof(UBYTE *), MEMF_PUBLIC | MEMF_CLEAR);
+                meta->geotSizes = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+                if (meta->geotArray && meta->geotSizes) {
+                    ci = FindCollection(picture->iff, picture->formtype, ID_GEOT);
+                    for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                        if (ci->ci_Size > 0) {
+                            meta->geotSizes[i] = ci->ci_Size;
+                            meta->geotArray[i] = (UBYTE *)AllocMem(ci->ci_Size, MEMF_PUBLIC | MEMF_CLEAR);
+                            if (meta->geotArray[i]) {
+                                CopyMem(ci->ci_Data, meta->geotArray[i], ci->ci_Size);
+                            }
+                        } else {
+                            meta->geotSizes[i] = 0;
+                        }
+                    }
+                    /* Store first instance pointer for convenience */
+                    meta->geot = meta->geotArray[0];
+                    meta->geotSize = meta->geotSizes[0];
+                }
+            }
+        }
+    }
+    
+    /* Read GEOF chunks (multiple instances via CollectionChunk) - 4-byte chunk IDs */
+    ci = FindCollection(picture->iff, picture->formtype, ID_GEOF);
+    if (ci) {
+        count = 0;
+        while (ci) {
+            count++;
+            ci = ci->ci_Next;
+        }
+        
+        if (count > 0) {
+            meta = EnsureMeta(picture);
+            if (meta) {
+                meta->geofCount = count;
+                meta->geofArray = (ULONG *)AllocMem(count * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+                if (meta->geofArray) {
+                    ci = FindCollection(picture->iff, picture->formtype, ID_GEOF);
+                    for (i = 0; i < count && ci; i++, ci = ci->ci_Next) {
+                        if (ci->ci_Size >= 4) {
+                            src = (UBYTE *)ci->ci_Data;
+                            meta->geofArray[i] = (ULONG)((src[0] << 24) | (src[1] << 16) | (src[2] << 8) | src[3]);
+                        } else {
+                            meta->geofArray[i] = 0x20202020UL;  /* '    ' - unknown source */
+                        }
+                    }
+                    /* Store first instance pointer for convenience */
+                    meta->geof = &meta->geofArray[0];
+                }
             }
         }
     }
@@ -1231,16 +1842,34 @@ VOID ReadMetadata(struct IFFPicture *picture)
 LONG Decode(struct IFFPicture *picture)
 {
     LONG result;
+    UWORD width, height;
     
-    if (!picture || !picture->isLoaded || !picture->bmhd) {
+    if (!picture || !picture->isLoaded) {
         if (picture) {
-            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Picture not loaded or BMHD missing");
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Picture not loaded");
         }
         return RETURN_FAIL;
     }
     
+    /* Get dimensions based on format */
+    if (picture->formtype == ID_YUVN) {
+        if (!picture->ychd) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "YCHD missing");
+            return RETURN_FAIL;
+        }
+        width = picture->ychd->ychd_Width;
+        height = picture->ychd->ychd_Height;
+    } else {
+        if (!picture->bmhd) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "BMHD missing");
+            return RETURN_FAIL;
+        }
+        width = picture->bmhd->w;
+        height = picture->bmhd->h;
+    }
+    
     /* Allocate RGB pixel buffer - use public memory (not chip RAM, we're not rendering to display) */
-    picture->pixelDataSize = (ULONG)picture->bmhd->w * picture->bmhd->h * 3;
+    picture->pixelDataSize = (ULONG)width * height * 3;
     picture->pixelData = (UBYTE *)AllocMem(picture->pixelDataSize, MEMF_PUBLIC | MEMF_CLEAR);
     if (!picture->pixelData) {
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate pixel data buffer");
@@ -1275,6 +1904,9 @@ LONG Decode(struct IFFPicture *picture)
             break;
         case ID_ACBM:
             result = DecodeACBM(picture);
+            break;
+        case ID_YUVN:
+            result = DecodeYUVN(picture);
             break;
         default:
             SetIFFPictureError(picture, IFFPICTURE_UNSUPPORTED, "Unsupported format for decoding");
@@ -1351,4 +1983,5 @@ const char *GetErrorString(struct IFFPicture *picture)
     }
     return picture->errorString;
 }
+
 

@@ -23,9 +23,9 @@
 /* Forward declarations for opaque and external types */
 struct IFFPicture;      /* Opaque structure - use accessor functions */
 struct BitMapHeader;    /* Public structure defined below */
-struct IFFColorMap;      /* Public structure defined below (renamed from ColorMap to avoid conflict with graphics/view.h) */
+struct IFFColorMap;      /* Public structure defined below */
 struct PNGConfig;        /* Defined in png_encoder.h from libpng */
-/* Note: struct IFFHandle is defined in libraries/iffparse.h - include that header if needed */
+/* Note: struct IFFHandle is defined in libraries/iffparse.h */
 
 /*****************************************************************************/
 
@@ -174,6 +174,111 @@ LONG ParseIFFPicture(struct IFFPicture *picture);
  *                  IFFPicture's memory, or NULL if not found. Pointers are
  *                  valid until FreeIFFPicture() is called. Library owns the
  *                  memory - caller must NOT free.
+ *
+ * Extended Metadata Chunk Reading Functions (IFF-EXIF/IPTC/XMP/ICCP/GeoTIFF):
+ *
+ * ReadEXIF() - Reads the EXIF chunk (first instance). Returns a pointer to
+ *              EXIF data in IFFPicture's memory, or NULL if not found.
+ *              EXIF data is raw binary data (same payload as APP1 JPEG EXIF
+ *              markers). The size parameter is optional and will be set to
+ *              the data size if provided. Pointer is valid until FreeIFFPicture()
+ *              is called. Library owns the memory - caller must NOT free.
+ *
+ * ReadAllEXIF() - Reads all EXIF chunks. Returns a pointer to a BinaryDataList
+ *                 structure containing count and array pointers into IFFPicture's
+ *                 memory, or NULL if not found. Pointers are valid until
+ *                 FreeIFFPicture() is called. Library owns the memory - caller
+ *                 must NOT free.
+ *
+ * ReadIPTC() - Reads the IPTC chunk (first instance). Returns a pointer to
+ *              IPTC data in IFFPicture's memory, or NULL if not found.
+ *              IPTC data is raw binary data (same payload as APP13 JPEG PS3
+ *              marker, IPTC block only). The size parameter is optional and
+ *              will be set to the data size if provided. Pointer is valid until
+ *              FreeIFFPicture() is called. Library owns the memory - caller
+ *              must NOT free.
+ *
+ * ReadAllIPTC() - Reads all IPTC chunks. Returns a pointer to a BinaryDataList
+ *                 structure containing count and array pointers into IFFPicture's
+ *                 memory, or NULL if not found. Pointers are valid until
+ *                 FreeIFFPicture() is called. Library owns the memory - caller
+ *                 must NOT free.
+ *
+ * ReadXMP0() - Reads the XMP0 chunk (first instance). Returns a pointer to
+ *              XMP0 data in IFFPicture's memory, or NULL if not found.
+ *              XMP0 data is raw binary data (same payload as APP1 JPEG XMP
+ *              markers, pure XML without header). Size limit 64K (inherent),
+ *              i.e. 65502 bytes. The size parameter is optional and will be set
+ *              to the data size if provided. Pointer is valid until
+ *              FreeIFFPicture() is called. Library owns the memory - caller
+ *              must NOT free.
+ *
+ * ReadAllXMP0() - Reads all XMP0 chunks. Returns a pointer to a BinaryDataList
+ *                 structure containing count and array pointers into IFFPicture's
+ *                 memory, or NULL if not found. Pointers are valid until
+ *                 FreeIFFPicture() is called. Library owns the memory - caller
+ *                 must NOT free.
+ *
+ * ReadXMP1() - Reads the XMP1 chunk (single instance). Returns a pointer to
+ *              XMP1 data in IFFPicture's memory, or NULL if not found.
+ *              XMP1 data is raw binary data (same payload as 'tXMP' PNG chunk,
+ *              pure XML without header). No significant size limit (2-4 GB).
+ *              The size parameter is optional and will be set to the data size
+ *              if provided. Pointer is valid until FreeIFFPicture() is called.
+ *              Library owns the memory - caller must NOT free.
+ *
+ * ReadICCP() - Reads the ICCP chunk (first instance). Returns a pointer to
+ *              ICC profile data in IFFPicture's memory, or NULL if not found.
+ *              ICCP data is raw binary data (standard ICC profile embedded
+ *              as-is). The size parameter is optional and will be set to the
+ *              data size if provided. Pointer is valid until FreeIFFPicture()
+ *              is called. Library owns the memory - caller must NOT free.
+ *
+ * ReadAllICCP() - Reads all ICCP chunks. Returns a pointer to a BinaryDataList
+ *                 structure containing count and array pointers into IFFPicture's
+ *                 memory, or NULL if not found. Pointers are valid until
+ *                 FreeIFFPicture() is called. Library owns the memory - caller
+ *                 must NOT free.
+ *
+ * ReadICCN() - Reads the ICCN chunk (first instance). Returns a pointer to a
+ *              null-terminated string in IFFPicture's memory, or NULL if not
+ *              found. ICCN contains the name of the ICC profile. Pointer is
+ *              valid until FreeIFFPicture() is called. Library owns the
+ *              memory - caller must NOT free.
+ *
+ * ReadAllICCN() - Reads all ICCN chunks. Returns a pointer to a TextList
+ *                 structure containing count and array pointer into IFFPicture's
+ *                 memory, or NULL if not found. Pointers are valid until
+ *                 FreeIFFPicture() is called. Library owns the memory - caller
+ *                 must NOT free.
+ *
+ * ReadGEOT() - Reads the GEOT chunk (first instance). Returns a pointer to
+ *              GeoTIFF data in IFFPicture's memory, or NULL if not found.
+ *              GEOT data is raw binary data (pure GeoTIFF file content, either
+ *              starting with 'II' or 'MM'). The size parameter is optional and
+ *              will be set to the data size if provided. Pointer is valid until
+ *              FreeIFFPicture() is called. Library owns the memory - caller
+ *              must NOT free.
+ *
+ * ReadAllGEOT() - Reads all GEOT chunks. Returns a pointer to a BinaryDataList
+ *                 structure containing count and array pointers into IFFPicture's
+ *                 memory, or NULL if not found. Pointers are valid until
+ *                 FreeIFFPicture() is called. Library owns the memory - caller
+ *                 must NOT free.
+ *
+ * ReadGEOF() - Reads the GEOF chunk (first instance). Returns a pointer to a
+ *              ULONG in IFFPicture's memory containing a 4-byte chunk ID, or
+ *              NULL if not found. GEOF content is a 4-byte chunk ID (ASCII)
+ *              indicating the origin of GEOT data. Common values: 'JFIF', 'JP2K',
+ *              'PNG ', 'TIFF', 'GEOT', 'RGFX', '    ' (unknown). Pointer is
+ *              valid until FreeIFFPicture() is called. Library owns the memory -
+ *              caller must NOT free.
+ *
+ * ReadAllGEOF() - Reads all GEOF chunks. Returns a pointer to a GEOFList
+ *                 structure containing count and array pointer into IFFPicture's
+ *                 memory, or NULL if not found. Pointers are valid until
+ *                 FreeIFFPicture() is called. Library owns the memory - caller
+ *                 must NOT free.
  */
 LONG ReadBMHD(struct IFFPicture *picture);
 LONG ReadCMAP(struct IFFPicture *picture);
@@ -216,6 +321,17 @@ struct TextList {
     STRPTR *texts;              /* Array of null-terminated strings */
 };
 
+struct BinaryDataList {
+    ULONG count;                /* Number of binary data entries */
+    UBYTE **data;               /* Array of pointers to binary data */
+    ULONG *sizes;               /* Array of sizes for each data entry */
+};
+
+struct GEOFList {
+    ULONG count;                /* Number of GEOF chunk IDs */
+    ULONG *ids;                 /* Array of 4-byte chunk IDs (ULONG) */
+};
+
 /* Metadata chunk reading functions
  * 
  * All functions return pointers into IFFPicture's memory.
@@ -236,6 +352,23 @@ STRPTR ReadAnnotation(struct IFFPicture *picture);
 struct TextList *ReadAllAnnotations(struct IFFPicture *picture);
 STRPTR ReadText(struct IFFPicture *picture);
 struct TextList *ReadAllTexts(struct IFFPicture *picture);
+
+/* Extended metadata chunk reading functions (IFF-EXIF/IPTC/XMP/ICCP/GeoTIFF) */
+UBYTE *ReadEXIF(struct IFFPicture *picture, ULONG *size);
+struct BinaryDataList *ReadAllEXIF(struct IFFPicture *picture);
+UBYTE *ReadIPTC(struct IFFPicture *picture, ULONG *size);
+struct BinaryDataList *ReadAllIPTC(struct IFFPicture *picture);
+UBYTE *ReadXMP0(struct IFFPicture *picture, ULONG *size);
+struct BinaryDataList *ReadAllXMP0(struct IFFPicture *picture);
+UBYTE *ReadXMP1(struct IFFPicture *picture, ULONG *size);
+UBYTE *ReadICCP(struct IFFPicture *picture, ULONG *size);
+struct BinaryDataList *ReadAllICCP(struct IFFPicture *picture);
+STRPTR ReadICCN(struct IFFPicture *picture);
+struct TextList *ReadAllICCN(struct IFFPicture *picture);
+UBYTE *ReadGEOT(struct IFFPicture *picture, ULONG *size);
+struct BinaryDataList *ReadAllGEOT(struct IFFPicture *picture);
+ULONG *ReadGEOF(struct IFFPicture *picture);
+struct GEOFList *ReadAllGEOF(struct IFFPicture *picture);
 
 /*****************************************************************************/
 
@@ -265,6 +398,10 @@ struct TextList *ReadAllTexts(struct IFFPicture *picture);
  *             This pointer remains valid until the IFFPicture is freed.
  *             Returns NULL if not loaded.
  *
+ * GetYCHD() - Return pointer to the internal YCHD structure (YUVN format).
+ *             This pointer remains valid until the IFFPicture is freed.
+ *             Returns NULL if not loaded or not YUVN format.
+ *
  * GetIFFColorMap() - Return pointer to the internal IFFColorMap structure
  *                    (palette data). This pointer remains valid until the
  *                    IFFPicture is freed. Returns NULL if not loaded.
@@ -280,6 +417,14 @@ struct TextList *ReadAllTexts(struct IFFPicture *picture);
  *
  * HasAlpha/IsHAM/IsEHB/IsCompressed() - Boolean queries about image properties.
  *                                       These are determined during format analysis.
+ *
+ * GetImageInfo() - Returns a pointer to an IFFImageInfo structure containing
+ *                  all core image properties (dimensions, format, flags, etc.)
+ *                  in a single structure. This is useful for getting a complete
+ *                  overview of the image without making multiple function calls.
+ *                  The structure is allocated statically and remains valid until
+ *                  the next call to GetImageInfo() or until the IFFPicture is freed.
+ *                  Returns NULL if the picture is invalid or not loaded.
  */
 struct IFFHandle *GetIFFHandle(struct IFFPicture *picture);
 UWORD GetWidth(struct IFFPicture *picture);
@@ -289,6 +434,7 @@ ULONG GetFormType(struct IFFPicture *picture);
 ULONG GetVPModes(struct IFFPicture *picture);
 UBYTE GetFAXXCompression(struct IFFPicture *picture);  /* Returns FAXX compression type (0=None, 1=MH, 2=MR, 4=MMR) */
 struct BitMapHeader *GetBMHD(struct IFFPicture *picture);
+struct YCHDHeader *GetYCHD(struct IFFPicture *picture);
 struct IFFColorMap *GetIFFColorMap(struct IFFPicture *picture);
 UBYTE *GetPixelData(struct IFFPicture *picture);
 ULONG GetPixelDataSize(struct IFFPicture *picture);
@@ -296,6 +442,27 @@ BOOL HasAlpha(struct IFFPicture *picture);
 BOOL IsHAM(struct IFFPicture *picture);
 BOOL IsEHB(struct IFFPicture *picture);
 BOOL IsCompressed(struct IFFPicture *picture);
+
+/* IFFImageInfo structure - aggregate of core image properties */
+struct IFFImageInfo {
+    UWORD width;                /* Image width in pixels */
+    UWORD height;               /* Image height in pixels */
+    UWORD depth;                /* Number of bitplanes */
+    ULONG formType;             /* IFF FORM type (ID_ILBM, ID_PBM, etc.) */
+    ULONG viewportModes;        /* Amiga viewport mode flags (CAMG) */
+    ULONG compressedSize;       /* Size of compressed image data in bytes (BODY chunk size, 0 if not loaded) */
+    ULONG decodedSize;          /* Size of decoded pixel data in bytes (0 if not decoded) */
+    BOOL hasAlpha;              /* TRUE if image has alpha channel */
+    BOOL isHAM;                 /* TRUE if image uses HAM mode */
+    BOOL isEHB;                 /* TRUE if image uses Extra Half-Brite mode */
+    BOOL isCompressed;          /* TRUE if image data is compressed */
+    BOOL isIndexed;             /* TRUE if image uses indexed color (palette) */
+    BOOL isGrayscale;           /* TRUE if image is grayscale */
+    BOOL isLoaded;              /* TRUE if image has been loaded/parsed */
+    BOOL isDecoded;             /* TRUE if image has been decoded */
+};
+
+struct IFFImageInfo *GetImageInfo(struct IFFPicture *picture);
 
 /*****************************************************************************/
 
@@ -503,6 +670,55 @@ struct IFFColorMap {
 
 /*****************************************************************************/
 
+/* YCHD Header structure - public
+ *
+ * This structure represents the IFF YCHD (YUVN Header) chunk. It contains
+ * all the metadata needed to interpret YUV image data, including dimensions,
+ * YUV mode, compression, and TV system information.
+ *
+ * Note: The structure must match the IFF YCHD chunk layout exactly (24 bytes,
+ * byte-packed) to allow direct reading from IFF files. Field order and types
+ * are critical for correct parsing.
+ */
+struct YCHDHeader {
+    UWORD ychd_Width;        /* picture width in Y-pixels */
+    UWORD ychd_Height;       /* picture height (rows) */
+    UWORD ychd_PageWidth;    /* source page width & height */
+    UWORD ychd_PageHeight;   /* currently same as Width and Height */
+    UWORD ychd_LeftEdge;     /* position within the source page */
+    UWORD ychd_TopEdge;      /* currently 0,0 */
+    UBYTE ychd_AspectX;      /* pixel aspect (width : height) */
+    UBYTE ychd_AspectY;
+    UBYTE ychd_Compress;     /* compression type (0 = none) */
+    UBYTE ychd_Flags;        /* flags (bit 0 = LACE) */
+    UBYTE ychd_Mode;         /* YUV mode (see YCHD_MODE_* constants) */
+    UBYTE ychd_Norm;         /* TV system (see YCHD_NORM_* constants) */
+    WORD ychd_reserved2;     /* must be 0 */
+    LONG ychd_reserved3;      /* must be 0 */
+};
+
+/* YUVN Mode constants for YCHDHeader.ychd_Mode field */
+#define YCHD_MODE_400    0  /* black-and-white picture (no DATU and DATV) */
+#define YCHD_MODE_411    1  /* YUV-411 picture */
+#define YCHD_MODE_422    2  /* YUV-422 picture */
+#define YCHD_MODE_444    3  /* YUV-444 picture */
+#define YCHD_MODE_200    8  /* lores black-and-white picture */
+#define YCHD_MODE_211    9  /* lores color picture (422, but lores) */
+#define YCHD_MODE_222   10  /* lores color picture (444, but lores) */
+
+/* YUVN Norm constants for YCHDHeader.ychd_Norm field */
+#define YCHD_NORM_UNKNOWN  0  /* unknown, try to avoid this */
+#define YCHD_NORM_PAL      1  /* PAL 4.433 MHz */
+#define YCHD_NORM_NTSC     2  /* NTSC 3.579 MHz */
+
+/* YUVN Compression constants for YCHDHeader.ychd_Compress field */
+#define YCHD_COMPRESS_NONE  0  /* no compression */
+
+/* YUVN Flags constants for YCHDHeader.ychd_Flags field */
+#define YCHDF_LACE  1  /* if set the data-chunks contain a full-frame (interlaced) picture */
+
+/*****************************************************************************/
+
 /* IFF Form Type IDs
  *
  * These constants identify the different IFF image format variants.
@@ -529,6 +745,11 @@ struct IFFColorMap {
  * ID_FAXX - Facsimile Image: Fax image format using ITU-T T.4 compression
  *           (Modified Huffman, Modified READ, Modified Modified READ).
  *           Typically black and white images for fax transmission.
+ *
+ * ID_YUVN - YUV format: MacroSystem VLab YUV format for broadcast television.
+ *           Supports CCIR-601-2 standard for PAL and NTSC. Stores Y (luminance)
+ *           and optional U, V (color difference) channels. Supports various
+ *           subsampling modes (411, 422, 444) and grayscale (400).
  */
 #define ID_ILBM    MAKE_ID('I','L','B','M')  /* InterLeaved BitMap */
 #define ID_PBM     MAKE_ID('P','B','M',' ')  /* Packed BitMap */
@@ -537,6 +758,7 @@ struct IFFColorMap {
 #define ID_DEEP    MAKE_ID('D','E','E','P')  /* Deep format */
 #define ID_ACBM    MAKE_ID('A','C','B','M')  /* Amiga Continuous BitMap */
 #define ID_FAXX    MAKE_ID('F','A','X','X')  /* Facsimile Image */
+#define ID_YUVN    MAKE_ID('Y','U','V','N')  /* YUV format (MacroSystem VLab) */
 
 /*****************************************************************************/
 

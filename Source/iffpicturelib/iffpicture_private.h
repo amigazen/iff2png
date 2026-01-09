@@ -30,6 +30,12 @@
 #define ID_CMYK    0x434D594BUL  /* 'CMYK' */
 #define ID_DCOL    0x44434F4CUL  /* 'DCOL' */
 #define ID_DPI     0x44504920UL  /* 'DPI ' */
+/* YUVN chunk IDs */
+#define ID_YCHD    0x59434844UL  /* 'YCHD' - YUVN header */
+#define ID_DATY    0x44415459UL  /* 'DATY' - Y (luminance) data */
+#define ID_DATU    0x44415455UL  /* 'DATU' - U (color difference) data */
+#define ID_DATV    0x44415456UL  /* 'DATV' - V (color difference) data */
+#define ID_DATA    0x44415441UL  /* 'DATA' - Alpha channel data */
 /* Metadata chunk IDs */
 #define ID_GRAB    0x47524142UL  /* 'GRAB' - hotspot coordinates */
 #define ID_DEST    0x44455354UL  /* 'DEST' - destination merge */
@@ -39,6 +45,16 @@
 #define ID_AUTH    0x41555448UL  /* 'AUTH' - author text */
 #define ID_ANNO    0x414E4E4FUL  /* 'ANNO' - annotation text */
 #define ID_TEXT    0x54455854UL  /* 'TEXT' - unformatted text */
+/* Extended metadata chunk IDs (IFF-EXIF/IPTC/XMP/ICCP/GeoTIFF) */
+#define ID_EXIF    0x45584946UL  /* 'EXIF' - EXIF Image Meta Data */
+#define ID_IPTC    0x49505443UL  /* 'IPTC' - IPTC Image Meta Data */
+#define ID_XMP0    0x584D5030UL  /* 'XMP0' - XMP Image Meta Data (JPEG-style, 64K limit) */
+#define ID_XMP1    0x584D5031UL  /* 'XMP1' - XMP Image Meta Data (PNG-style, larger) */
+#define ID_ICCP    0x49434350UL  /* 'ICCP' - ICC Profile Data */
+#define ID_ICCN    0x4943434EUL  /* 'ICCN' - ICC Profile Name */
+#define ID_GEOT    0x47454F54UL  /* 'GEOT' - GeoTIFF Meta Data */
+#define ID_GEOF    0x47454F46UL  /* 'GEOF' - GeoTIFF Meta Data Flags */
+#define ID_META    0x4D455441UL  /* 'META' - indicates metadata-only file (FORM type) */
 
 /* Viewport mode flags */
 #define vmLACE              0x0004UL
@@ -62,10 +78,70 @@
 #define HAMCODE_RED     2
 #define HAMCODE_GREEN   3
 
+/* IFFPictureMeta structure - metadata storage, allocated on demand */
+struct IFFPictureMeta {
+    /* Standard metadata storage - library owns all memory */
+    struct Point2D *grab;              /* GRAB chunk (hotspot) */
+    struct DestMerge *dest;             /* DEST chunk */
+    UWORD *sprt;                        /* SPRT chunk (sprite precedence) */
+    struct CRange *crng;                /* CRNG chunk (first instance) */
+    ULONG crngCount;                    /* Number of CRNG chunks */
+    struct CRange *crngArray;           /* Array of all CRNG chunks */
+    STRPTR copyright;                   /* Copyright chunk */
+    ULONG copyrightSize;                /* Size of copyright string (including null) */
+    STRPTR author;                      /* AUTH chunk */
+    ULONG authorSize;                   /* Size of author string (including null) */
+    STRPTR annotation;                  /* ANNO chunk (first instance) */
+    ULONG annotationCount;              /* Number of ANNO chunks */
+    STRPTR *annotationArray;            /* Array of all ANNO strings */
+    ULONG *annotationSizes;             /* Array of sizes for each ANNO string */
+    STRPTR text;                        /* TEXT chunk (first instance) */
+    ULONG textCount;                    /* Number of TEXT chunks */
+    STRPTR *textArray;                  /* Array of all TEXT strings */
+    ULONG *textSizes;                   /* Array of sizes for each TEXT string */
+    /* Extended metadata storage - library owns all memory */
+    UBYTE *exif;                        /* EXIF chunk (first instance) */
+    ULONG exifSize;                     /* Size of first EXIF chunk */
+    ULONG exifCount;                    /* Number of EXIF chunks */
+    UBYTE **exifArray;                  /* Array of all EXIF chunks */
+    ULONG *exifSizes;                   /* Array of sizes for each EXIF chunk */
+    UBYTE *iptc;                        /* IPTC chunk (first instance) */
+    ULONG iptcSize;                     /* Size of first IPTC chunk */
+    ULONG iptcCount;                    /* Number of IPTC chunks */
+    UBYTE **iptcArray;                  /* Array of all IPTC chunks */
+    ULONG *iptcSizes;                   /* Array of sizes for each IPTC chunk */
+    UBYTE *xmp0;                        /* XMP0 chunk (first instance) */
+    ULONG xmp0Size;                     /* Size of first XMP0 chunk */
+    ULONG xmp0Count;                    /* Number of XMP0 chunks */
+    UBYTE **xmp0Array;                  /* Array of all XMP0 chunks */
+    ULONG *xmp0Sizes;                   /* Array of sizes for each XMP0 chunk */
+    UBYTE *xmp1;                        /* XMP1 chunk (single instance) */
+    ULONG xmp1Size;                     /* Size of XMP1 chunk */
+    UBYTE *iccp;                        /* ICCP chunk (first instance) */
+    ULONG iccpSize;                     /* Size of first ICCP chunk */
+    ULONG iccpCount;                    /* Number of ICCP chunks */
+    UBYTE **iccpArray;                  /* Array of all ICCP chunks */
+    ULONG *iccpSizes;                   /* Array of sizes for each ICCP chunk */
+    STRPTR iccn;                        /* ICCN chunk (first instance) */
+    ULONG iccnSize;                     /* Size of first ICCN string (including null) */
+    ULONG iccnCount;                    /* Number of ICCN chunks */
+    STRPTR *iccnArray;                  /* Array of all ICCN strings */
+    ULONG *iccnSizes;                   /* Array of sizes for each ICCN string */
+    UBYTE *geot;                        /* GEOT chunk (first instance) */
+    ULONG geotSize;                     /* Size of first GEOT chunk */
+    ULONG geotCount;                    /* Number of GEOT chunks */
+    UBYTE **geotArray;                  /* Array of all GEOT chunks */
+    ULONG *geotSizes;                   /* Array of sizes for each GEOT chunk */
+    ULONG *geof;                        /* GEOF chunk (first instance) - 4-byte chunk ID */
+    ULONG geofCount;                    /* Number of GEOF chunks */
+    ULONG *geofArray;                   /* Array of all GEOF chunk IDs */
+};
+
 /* Complete IFFPicture structure - private implementation */
 struct IFFPicture {
     /* Public members */
     struct BitMapHeader *bmhd;
+    struct YCHDHeader *ychd;  /* YUVN header (for YUVN format) */
     struct IFFColorMap *cmap;
     ULONG viewportmodes;
     ULONG formtype;
@@ -101,25 +177,8 @@ struct IFFPicture {
     /* FAXX-specific: store original compression type */
     UBYTE faxxCompression;
     
-    /* Metadata storage - library owns all memory */
-    struct Point2D *grab;              /* GRAB chunk (hotspot) */
-    struct DestMerge *dest;             /* DEST chunk */
-    UWORD *sprt;                        /* SPRT chunk (sprite precedence) */
-    struct CRange *crng;                /* CRNG chunk (first instance) */
-    ULONG crngCount;                    /* Number of CRNG chunks */
-    struct CRange *crngArray;           /* Array of all CRNG chunks */
-    STRPTR copyright;                   /* Copyright chunk */
-    ULONG copyrightSize;                /* Size of copyright string (including null) */
-    STRPTR author;                      /* AUTH chunk */
-    ULONG authorSize;                   /* Size of author string (including null) */
-    STRPTR annotation;                  /* ANNO chunk (first instance) */
-    ULONG annotationCount;              /* Number of ANNO chunks */
-    STRPTR *annotationArray;            /* Array of all ANNO strings */
-    ULONG *annotationSizes;             /* Array of sizes for each ANNO string */
-    STRPTR text;                        /* TEXT chunk (first instance) */
-    ULONG textCount;                    /* Number of TEXT chunks */
-    STRPTR *textArray;                  /* Array of all TEXT strings */
-    ULONG *textSizes;                   /* Array of sizes for each TEXT string */
+    /* Metadata storage - allocated on demand */
+    struct IFFPictureMeta *metadata;    /* Metadata structure, NULL if no metadata */
 };
 
 /* Internal function prototypes - declared in image_decoder.c */
@@ -132,10 +191,11 @@ LONG DecodeRGBN(struct IFFPicture *picture);
 LONG DecodeRGB8(struct IFFPicture *picture);
 LONG DecodeACBM(struct IFFPicture *picture);
 LONG DecodeFAXX(struct IFFPicture *picture);
+LONG DecodeYUVN(struct IFFPicture *picture);
 LONG AnalyzeFormat(struct IFFPicture *picture);
 LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config, BOOL opaque);
 VOID SetIFFPictureError(struct IFFPicture *picture, LONG error, const char *message);
-VOID ReadMetadata(struct IFFPicture *picture);
+VOID ReadAllMeta(struct IFFPicture *picture);
 
 #endif /* IFFPICTURE_PRIVATE_H */
 
