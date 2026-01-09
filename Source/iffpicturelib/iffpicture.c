@@ -513,11 +513,13 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
         CollectionChunk(picture->iff, formType, ID_ICCN);
         CollectionChunk(picture->iff, formType, ID_GEOT);
         CollectionChunk(picture->iff, formType, ID_GEOF);
-        /* Stop at data chunks - DATY, DATU, DATV, DATA must appear in this order */
+        /* Stop at data chunks - DATY, DATU, DATV, DATA (optional alpha) must appear in this order */
         if ((error = StopChunk(picture->iff, formType, ID_DATY)) != 0) {
             SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set StopChunk for DATY");
             return RETURN_FAIL;
         }
+        /* DATA chunk is optional (alpha channel) - don't fail if missing */
+        StopChunk(picture->iff, formType, ID_DATA);
     } else {
         SetIFFPictureError(picture, IFFPICTURE_UNSUPPORTED, "Unsupported IFF FORM type");
         return RETURN_FAIL;
@@ -997,6 +999,43 @@ LONG ReadYCHD(struct IFFPicture *picture)
     if (ychd->ychd_Compress != YCHD_COMPRESS_NONE) {
         SetIFFPictureError(picture, IFFPICTURE_UNSUPPORTED, "YUVN compression not supported");
         return RETURN_FAIL;
+    }
+    
+    /* Validate width constraints based on mode */
+    switch (ychd->ychd_Mode) {
+        case YCHD_MODE_411:
+            /* Width must be a multiple of 4 */
+            if ((ychd->ychd_Width % 4) != 0) {
+                SetIFFPictureError(picture, IFFPICTURE_BADFILE, "YUVN mode 411 requires width to be multiple of 4");
+                return RETURN_FAIL;
+            }
+            break;
+        case YCHD_MODE_422:
+        case YCHD_MODE_211:
+            /* Width must be a multiple of 2 */
+            if ((ychd->ychd_Width % 2) != 0) {
+                SetIFFPictureError(picture, IFFPICTURE_BADFILE, "YUVN mode 422/211 requires width to be multiple of 2");
+                return RETURN_FAIL;
+            }
+            break;
+        case YCHD_MODE_400:
+        case YCHD_MODE_444:
+        case YCHD_MODE_200:
+        case YCHD_MODE_222:
+            /* No width constraints for these modes */
+            break;
+        default:
+            /* Unknown mode - will be caught later */
+            break;
+    }
+    
+    /* Validate height constraint for full-frame/interlaced images */
+    if ((ychd->ychd_Flags & YCHDF_LACE) != 0) {
+        /* Full-frame/interlaced: height must be a multiple of 2 */
+        if ((ychd->ychd_Height % 2) != 0) {
+            SetIFFPictureError(picture, IFFPICTURE_BADFILE, "YUVN full-frame/interlaced requires height to be multiple of 2");
+            return RETURN_FAIL;
+        }
     }
     
     return RETURN_OK;
@@ -1869,6 +1908,7 @@ LONG Decode(struct IFFPicture *picture)
     }
     
     /* Allocate RGB pixel buffer - use public memory (not chip RAM, we're not rendering to display) */
+    /* For YUVN, we'll check for alpha and reallocate if needed in DecodeYUVN() */
     picture->pixelDataSize = (ULONG)width * height * 3;
     picture->pixelData = (UBYTE *)AllocMem(picture->pixelDataSize, MEMF_PUBLIC | MEMF_CLEAR);
     if (!picture->pixelData) {

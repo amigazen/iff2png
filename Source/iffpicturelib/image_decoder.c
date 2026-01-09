@@ -2596,6 +2596,15 @@ LONG DecodeYUVN(struct IFFPicture *picture)
     LONG r, g, b;
     BOOL isColor;
     BOOL isLores;
+    UBYTE *alphaData;
+    BOOL hasAlpha;
+    UBYTE *alphaBuf;
+    ULONG alphaSize;
+    struct ContextNode *cn;
+    UBYTE *yRow;
+    UBYTE *uRow;
+    UBYTE *vRow;
+    UBYTE *alphaRow;
     
     if (!picture || !picture->ychd || !picture->iff) {
         SetIFFPictureError(picture, IFFPICTURE_INVALID, "Missing YCHD or IFF handle for YUVN decoding");
@@ -2796,14 +2805,77 @@ LONG DecodeYUVN(struct IFFPicture *picture)
         }
     }
     
-    /* Get RGB output buffer */
+    /* Check for DATA chunk (alpha channel) after DATV (color) or DATY (grayscale) */
+    hasAlpha = FALSE;
+    alphaData = NULL;
+    alphaBuf = NULL;
+    alphaSize = 0;
+    cn = NULL;
+    
+    /* Try to parse to DATA chunk (optional alpha) */
+    /* For color images, DATA comes after DATV; for grayscale, after DATY */
+    if (ParseIFF(picture->iff, IFFPARSE_STEP) == 0) {
+        cn = CurrentChunk(picture->iff);
+        if (cn && cn->cn_ID == ID_DATA) {
+            /* DATA chunk found - read alpha channel */
+            alphaSize = (ULONG)width * height;
+            alphaData = (UBYTE *)AllocMem(alphaSize, MEMF_PUBLIC | MEMF_CLEAR);
+            if (alphaData) {
+                alphaBuf = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+                if (alphaBuf) {
+                    hasAlpha = TRUE;
+                    /* Read all alpha rows */
+                    for (row = 0; row < height; row++) {
+                        bytesRead = ReadChunkBytes(picture->iff, alphaBuf, width);
+                        if (bytesRead != width) {
+                            /* Error reading alpha - treat as no alpha */
+                            FreeMem(alphaBuf, width);
+                            FreeMem(alphaData, alphaSize);
+                            alphaData = NULL;
+                            hasAlpha = FALSE;
+                            break;
+                        }
+                        /* Copy row to alpha data buffer */
+                        CopyMem(alphaBuf, alphaData + (ULONG)row * width, width);
+                    }
+                    FreeMem(alphaBuf, width);
+                } else {
+                    /* Failed to allocate alpha buffer - no alpha */
+                    FreeMem(alphaData, alphaSize);
+                    alphaData = NULL;
+                }
+            }
+        }
+    }
+    
+    /* Reallocate pixel data buffer to include alpha if needed */
+    if (hasAlpha && alphaData) {
+        /* Free RGB-only buffer and allocate RGBA buffer */
+        FreeMem(picture->pixelData, picture->pixelDataSize);
+        picture->pixelDataSize = (ULONG)width * height * 4;
+        picture->pixelData = (UBYTE *)AllocMem(picture->pixelDataSize, MEMF_PUBLIC | MEMF_CLEAR);
+        if (!picture->pixelData) {
+            FreeMem(yBuf, width);
+            FreeMem(yData, (ULONG)width * height);
+            if (uData) FreeMem(uData, (ULONG)uBytes * height);
+            if (vData) FreeMem(vData, (ULONG)vBytes * height);
+            if (uBuf) FreeMem(uBuf, uBytes);
+            if (vBuf) FreeMem(vBuf, vBytes);
+            FreeMem(alphaData, (ULONG)width * height);
+            SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate RGBA pixel data buffer");
+            return RETURN_FAIL;
+        }
+    }
+    
+    /* Get RGB/RGBA output buffer */
     rgbOut = picture->pixelData;
     
-    /* Convert YUV to RGB for all rows */
+    /* Convert YUV to RGB/RGBA for all rows */
     for (row = 0; row < height; row++) {
-        UBYTE *yRow = yData + (ULONG)row * width;
-        UBYTE *uRow = (uData) ? (uData + (ULONG)row * uBytes) : NULL;
-        UBYTE *vRow = (vData) ? (vData + (ULONG)row * vBytes) : NULL;
+        yRow = yData + (ULONG)row * width;
+        uRow = (uData) ? (uData + (ULONG)row * uBytes) : NULL;
+        vRow = (vData) ? (vData + (ULONG)row * vBytes) : NULL;
+        alphaRow = (alphaData) ? (alphaData + (ULONG)row * width) : NULL;
         
         for (col = 0; col < width; col++) {
             y = yRow[col];
@@ -2852,6 +2924,12 @@ LONG DecodeYUVN(struct IFFPicture *picture)
                 rgbOut[0] = (UBYTE)r;
                 rgbOut[1] = (UBYTE)g;
                 rgbOut[2] = (UBYTE)b;
+                if (hasAlpha && alphaRow) {
+                    rgbOut[3] = alphaRow[col];
+                    rgbOut += 4;
+                } else {
+                    rgbOut += 3;
+                }
             } else {
                 /* Grayscale - Y only, convert to RGB */
                 /* Y is in range 16-235, scale to 0-255 */
@@ -2867,9 +2945,13 @@ LONG DecodeYUVN(struct IFFPicture *picture)
                 rgbOut[0] = y;
                 rgbOut[1] = y;
                 rgbOut[2] = y;
+                if (hasAlpha && alphaRow) {
+                    rgbOut[3] = alphaRow[col];
+                    rgbOut += 4;
+                } else {
+                    rgbOut += 3;
+                }
             }
-            
-            rgbOut += 3;
         }
     }
     
@@ -2880,16 +2962,13 @@ LONG DecodeYUVN(struct IFFPicture *picture)
     if (vData) FreeMem(vData, (ULONG)vBytes * height);
     if (uBuf) FreeMem(uBuf, uBytes);
     if (vBuf) FreeMem(vBuf, vBytes);
-    
-    /* Free buffers */
-    FreeMem(yBuf, width);
-    if (uBuf) FreeMem(uBuf, uBytes);
-    if (vBuf) FreeMem(vBuf, vBytes);
+    if (alphaData) FreeMem(alphaData, (ULONG)width * height);
     
     /* Set format flags */
     picture->isIndexed = FALSE;
     picture->isGrayscale = !isColor;
     picture->isCompressed = FALSE;
+    picture->hasAlpha = hasAlpha;
     
     return RETURN_OK;
 }
