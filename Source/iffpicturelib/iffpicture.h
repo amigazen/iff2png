@@ -175,6 +175,13 @@ LONG ParseIFFPicture(struct IFFPicture *picture);
  *                  valid until FreeIFFPicture() is called. Library owns the
  *                  memory - caller must NOT free.
  *
+ * ReadFVER() - Reads the FVER chunk. Returns a pointer to a null-terminated
+ *              string in IFFPicture's memory, or NULL if not found. FVER
+ *              contains an AmigaOS version string in the format:
+ *              $VER: name ver.rev (e.g., "$VER: workbench.catalog 53.12").
+ *              Pointer is valid until FreeIFFPicture() is called. Library
+ *              owns the memory - caller must NOT free.
+ *
  * Extended Metadata Chunk Reading Functions (IFF-EXIF/IPTC/XMP/ICCP/GeoTIFF):
  *
  * ReadEXIF() - Reads the EXIF chunk (first instance). Returns a pointer to
@@ -352,6 +359,7 @@ STRPTR ReadAnnotation(struct IFFPicture *picture);
 struct TextList *ReadAllAnnotations(struct IFFPicture *picture);
 STRPTR ReadText(struct IFFPicture *picture);
 struct TextList *ReadAllTexts(struct IFFPicture *picture);
+STRPTR ReadFVER(struct IFFPicture *picture);
 
 /* Extended metadata chunk reading functions (IFF-EXIF/IPTC/XMP/ICCP/GeoTIFF) */
 UBYTE *ReadEXIF(struct IFFPicture *picture, ULONG *size);

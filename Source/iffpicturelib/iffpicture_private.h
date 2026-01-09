@@ -46,6 +46,7 @@
 #define ID_AUTH    0x41555448UL  /* 'AUTH' - author text */
 #define ID_ANNO    0x414E4E4FUL  /* 'ANNO' - annotation text */
 #define ID_TEXT    0x54455854UL  /* 'TEXT' - unformatted text */
+#define ID_FVER    0x46564552UL  /* 'FVER' - AmigaOS version string */
 /* Extended metadata chunk IDs (IFF-EXIF/IPTC/XMP/ICCP/GeoTIFF) */
 #define ID_EXIF    0x45584946UL  /* 'EXIF' - EXIF Image Meta Data */
 #define ID_IPTC    0x49505443UL  /* 'IPTC' - IPTC Image Meta Data */
@@ -130,6 +131,8 @@ struct IFFPictureMeta {
     ULONG textCount;                    /* Number of TEXT chunks */
     STRPTR *textArray;                  /* Array of all TEXT strings */
     ULONG *textSizes;                   /* Array of sizes for each TEXT string */
+    STRPTR fver;                        /* FVER chunk (AmigaOS version string) */
+    ULONG fverSize;                     /* Size of FVER string (including null) */
     /* Extended metadata storage - library owns all memory */
     UBYTE *exif;                        /* EXIF chunk (first instance) */
     ULONG exifSize;                     /* Size of first EXIF chunk */

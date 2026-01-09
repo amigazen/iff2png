@@ -228,6 +228,9 @@ static VOID FreeIFFPictureMeta(struct IFFPictureMeta *meta)
     if (meta->textSizes) {
         FreeMem(meta->textSizes, meta->textCount * sizeof(ULONG));
     }
+    if (meta->fver) {
+        FreeMem(meta->fver, meta->fverSize);
+    }
     /* Free extended metadata */
     if (meta->exifArray) {
         for (i = 0; i < meta->exifCount; i++) {
@@ -487,6 +490,7 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
         CollectionChunk(picture->iff, formType, ID_CRNG);
         CollectionChunk(picture->iff, formType, ID_ANNO);
         CollectionChunk(picture->iff, formType, ID_TEXT);
+        PropChunk(picture->iff, formType, ID_FVER);
         /* Extended metadata chunks - can appear in any FORM type */
         CollectionChunk(picture->iff, formType, ID_EXIF);
         CollectionChunk(picture->iff, formType, ID_IPTC);
@@ -2188,6 +2192,20 @@ VOID ReadAllMeta(struct IFFPicture *picture)
                     /* Store first instance pointer for convenience */
                     meta->text = meta->textArray[0];
                 }
+            }
+        }
+    }
+    
+    /* Read FVER chunk (single instance) */
+    sp = FindProp(picture->iff, picture->formtype, ID_FVER);
+    if (sp && sp->sp_Size > 0) {
+        meta = EnsureMeta(picture);
+        if (meta) {
+            meta->fverSize = sp->sp_Size + 1;
+            meta->fver = (STRPTR)AllocMem(meta->fverSize, MEMF_PUBLIC | MEMF_CLEAR);
+            if (meta->fver) {
+                CopyMem(sp->sp_Data, meta->fver, sp->sp_Size);
+                meta->fver[sp->sp_Size] = '\0';
             }
         }
     }

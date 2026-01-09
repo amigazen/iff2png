@@ -207,6 +207,24 @@ struct TextList *ReadAllTexts(struct IFFPicture *picture)
 }
 
 /*
+** ReadFVER - Read FVER chunk
+** Returns: Pointer to null-terminated string in IFFPicture, or NULL if not found
+** Pointer is valid until FreeIFFPicture() is called
+** Library owns the memory - caller must NOT free
+** FVER contains an AmigaOS version string in the format: $VER: name ver.rev
+** Example: $VER: workbench.catalog 53.12
+*/
+STRPTR ReadFVER(struct IFFPicture *picture)
+{
+    if (!picture || !picture->metadata) {
+        return NULL;
+    }
+    
+    /* Return pointer to stored FVER string */
+    return picture->metadata->fver;
+}
+
+/*
 ** ReadEXIF - Read EXIF chunk (first instance)
 ** Returns: Pointer to EXIF data in IFFPicture, or NULL if not found
 ** Pointer is valid until FreeIFFPicture() is called
