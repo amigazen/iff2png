@@ -23,6 +23,7 @@
 #define ID_FXHD    0x46584844UL  /* 'FXHD' */
 #define ID_PAGE    0x50414745UL  /* 'PAGE' */
 #define ID_FLOG    0x464C4F47UL  /* 'FLOG' */
+#define ID_GPHD    0x47504844UL  /* 'GPHD' */
 #define ID_PCHG    0x50434847UL  /* 'PCHG' */
 #define ID_SHAM    0x5348414DUL  /* 'SHAM' */
 #define ID_CTBL    0x4354424CUL  /* 'CTBL' */
@@ -171,6 +172,8 @@ struct IFFPictureMeta {
 struct IFFPicture {
     /* Public members */
     struct BitMapHeader *bmhd;
+    struct FaxHeader *fxhd;   /* FAXX header (for FAXX format) */
+    struct GPHDHeader *gphd;  /* GPHD header (optional, for FAXX format) */
     struct YCHDHeader *ychd;  /* YUVN header (for YUVN format) */
     struct IFFColorMap *cmap;
     ULONG viewportmodes;
@@ -235,6 +238,10 @@ LONG AnalyzeFormat(struct IFFPicture *picture);
 LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config, BOOL opaque);
 VOID SetIFFPictureError(struct IFFPicture *picture, LONG error, const char *message);
 VOID ReadAllMeta(struct IFFPicture *picture);
+
+/* FAXX chunk reader function prototypes - declared in iffpicture.c */
+LONG ReadGPHD(struct IFFPicture *picture);
+LONG ReadFLOG(struct IFFPicture *picture);
 
 /* DEEP chunk reader function prototypes - declared in iffpicture.c */
 LONG ReadDGBL(struct IFFPicture *picture);

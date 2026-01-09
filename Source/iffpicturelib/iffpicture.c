@@ -69,6 +69,9 @@ struct IFFPicture *AllocIFFPicture(VOID)
     picture->bodyChunkSize = 0;
     picture->bodyChunkPosition = 0;
     picture->faxxCompression = 0;
+    picture->fxhd = NULL;
+    picture->gphd = NULL;
+    picture->ychd = NULL;
     
     return picture;
 }
@@ -97,6 +100,16 @@ VOID FreeIFFPicture(struct IFFPicture *picture)
     if (picture->bmhd) {
         FreeMem(picture->bmhd, sizeof(struct BitMapHeader));
         picture->bmhd = NULL;
+    }
+    
+    /* Free FAXX headers */
+    if (picture->fxhd) {
+        FreeMem(picture->fxhd, sizeof(struct FaxHeader));
+        picture->fxhd = NULL;
+    }
+    if (picture->gphd) {
+        FreeMem(picture->gphd, sizeof(struct GPHDHeader));
+        picture->gphd = NULL;
     }
     
     /* Free YUVN header */
@@ -445,12 +458,13 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
     
     /* Set up property chunks based on form type */
     if (formType == ID_FAXX) {
-        /* FAXX uses FXHD and PAGE chunks */
+        /* FAXX uses FXHD (required) and PAGE (required) chunks */
         if ((error = PropChunk(picture->iff, formType, ID_FXHD)) != 0) {
             SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set PropChunk for FXHD");
             return RETURN_FAIL;
         }
-        PropChunk(picture->iff, formType, ID_FLOG); /* Optional */
+        PropChunk(picture->iff, formType, ID_GPHD); /* Optional - additional header */
+        PropChunk(picture->iff, formType, ID_FLOG); /* Optional - log information */
         if ((error = StopChunk(picture->iff, formType, ID_PAGE)) != 0) {
             SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set StopChunk for PAGE");
             return RETURN_FAIL;
@@ -642,6 +656,12 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
             
             DEBUG_PUTSTR("DEBUG: ReadCMAP - Created default black/white CMAP for FAXX\n");
         }
+        /* Read optional GPHD chunk if present */
+        ReadGPHD(picture); /* Optional, so ignore return value */
+        
+        /* Read optional FLOG chunk if present */
+        ReadFLOG(picture); /* Optional, so ignore return value */
+        
         if (ReadPAGE(picture) != RETURN_OK) {
             /* Clean up on error */
             if (picture->cmap) {
@@ -813,6 +833,22 @@ struct BitMapHeader *GetBMHD(struct IFFPicture *picture)
         return NULL;
     }
     return picture->bmhd;
+}
+
+struct FaxHeader *GetFXHD(struct IFFPicture *picture)
+{
+    if (!picture) {
+        return NULL;
+    }
+    return picture->fxhd;
+}
+
+struct GPHDHeader *GetGPHD(struct IFFPicture *picture)
+{
+    if (!picture) {
+        return NULL;
+    }
+    return picture->gphd;
 }
 
 struct YCHDHeader *GetYCHD(struct IFFPicture *picture)
@@ -1353,23 +1389,36 @@ LONG ReadFXHD(struct IFFPicture *picture)
         return RETURN_FAIL;
     }
     
-    /* FXHD should be at least 8 bytes (Width, Height, LineLength, VRes, Compression) */
-    if (sp->sp_Size < 8) {
-        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "FXHD chunk too small");
+    /* FXHD should be at least 20 bytes (complete FaxHeader structure) */
+    if (sp->sp_Size < 20) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "FXHD chunk too small (must be at least 20 bytes)");
         return RETURN_FAIL;
     }
     
     DEBUG_PRINTF1("DEBUG: ReadFXHD - Found FXHD property, size=%ld\n", sp->sp_Size);
     
-    /* Free existing BMHD if present (shouldn't happen, but be safe) */
+    /* Free existing FXHD and BMHD if present (shouldn't happen, but be safe) */
+    if (picture->fxhd) {
+        FreeMem(picture->fxhd, sizeof(struct FaxHeader));
+        picture->fxhd = NULL;
+    }
     if (picture->bmhd) {
         FreeMem(picture->bmhd, sizeof(struct BitMapHeader));
         picture->bmhd = NULL;
     }
     
-    /* Allocate BMHD structure - use public memory (not chip RAM) */
+    /* Allocate FaxHeader structure - use public memory (not chip RAM) */
+    picture->fxhd = (struct FaxHeader *)AllocMem(sizeof(struct FaxHeader), MEMF_PUBLIC | MEMF_CLEAR);
+    if (!picture->fxhd) {
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate FaxHeader");
+        return RETURN_FAIL;
+    }
+    
+    /* Allocate BMHD structure for compatibility - use public memory (not chip RAM) */
     bmhd = (struct BitMapHeader *)AllocMem(sizeof(struct BitMapHeader), MEMF_PUBLIC | MEMF_CLEAR);
     if (!bmhd) {
+        FreeMem(picture->fxhd, sizeof(struct FaxHeader));
+        picture->fxhd = NULL;
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate BitMapHeader");
         return RETURN_FAIL;
     }
@@ -1377,12 +1426,31 @@ LONG ReadFXHD(struct IFFPicture *picture)
     /* Read FXHD data byte-by-byte (big-endian) */
     src = (UBYTE *)sp->sp_Data;
     
-    /* Read Width and Height (UWORD, big-endian, 2 bytes each) */
-    width = (UWORD)((src[0] << 8) | src[1]);
-    height = (UWORD)((src[2] << 8) | src[3]);
+    /* Read complete FaxHeader structure according to spec:
+     * UWORD Width (offset 0-1)
+     * UWORD Height (offset 2-3)
+     * UWORD LineLength (offset 4-5)
+     * UWORD VRes (offset 6-7)
+     * UBYTE Compression (offset 8)
+     * UBYTE Pad[11] (offset 9-19)
+     */
+    picture->fxhd->Width = (UWORD)((src[0] << 8) | src[1]);
+    picture->fxhd->Height = (UWORD)((src[2] << 8) | src[3]);
+    picture->fxhd->LineLength = (UWORD)((src[4] << 8) | src[5]);
+    picture->fxhd->VRes = (UWORD)((src[6] << 8) | src[7]);
+    picture->fxhd->Compression = src[8];
+    /* Copy Pad[11] bytes (offset 9-19) */
+    {
+        ULONG i;
+        for (i = 0; i < 11; i++) {
+            picture->fxhd->Pad[i] = src[9 + i];
+        }
+    }
     
-    /* Read Compression (UBYTE at offset 7) */
-    compression = src[7];
+    /* Extract values for BMHD conversion */
+    width = picture->fxhd->Width;
+    height = picture->fxhd->Height;
+    compression = picture->fxhd->Compression;
     
     /* Convert FXHD to BMHD structure */
     bmhd->w = width;
@@ -1411,8 +1479,132 @@ LONG ReadFXHD(struct IFFPicture *picture)
     picture->isCompressed = (compression != 0);
     picture->faxxCompression = compression;
     
-    DEBUG_PRINTF3("DEBUG: ReadFXHD - Width=%ld Height=%ld Compression=%ld\n",
-                 (ULONG)width, (ULONG)height, (ULONG)compression);
+    DEBUG_PRINTF5("DEBUG: ReadFXHD - Width=%ld Height=%ld LineLength=%ld VRes=%ld Compression=%ld\n",
+                 (ULONG)width, (ULONG)height, (ULONG)picture->fxhd->LineLength,
+                 (ULONG)picture->fxhd->VRes, (ULONG)compression);
+    
+    return RETURN_OK;
+}
+
+/*
+** ReadGPHD - Read GPHD chunk (optional additional FAXX header)
+** Returns: RETURN_OK on success, RETURN_FAIL on error (or if not found)
+** Follows iffparse.library pattern: FindProp
+**
+** GPHD is an optional additional header used by some software producers
+** as an extension to FXHD. See FAXX.GPHD.doc specification.
+*/
+LONG ReadGPHD(struct IFFPicture *picture)
+{
+    struct StoredProperty *sp;
+    UBYTE *src;
+    ULONG i;
+    
+    if (!picture || !picture->iff) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid picture or IFF handle");
+        }
+        return RETURN_FAIL;
+    }
+    
+    /* Find stored GPHD property (optional) */
+    sp = FindProp(picture->iff, picture->formtype, ID_GPHD);
+    if (!sp) {
+        /* GPHD is optional, so not finding it is not an error */
+        return RETURN_OK;
+    }
+    
+    /* GPHD should be at least 58 bytes (complete GPHDHeader structure) */
+    if (sp->sp_Size < 58) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "GPHD chunk too small (must be at least 58 bytes)");
+        return RETURN_FAIL;
+    }
+    
+    DEBUG_PRINTF1("DEBUG: ReadGPHD - Found GPHD property, size=%ld\n", sp->sp_Size);
+    
+    /* Free existing GPHD if present */
+    if (picture->gphd) {
+        FreeMem(picture->gphd, sizeof(struct GPHDHeader));
+        picture->gphd = NULL;
+    }
+    
+    /* Allocate GPHDHeader structure - use public memory (not chip RAM) */
+    picture->gphd = (struct GPHDHeader *)AllocMem(sizeof(struct GPHDHeader), MEMF_PUBLIC | MEMF_CLEAR);
+    if (!picture->gphd) {
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate GPHDHeader");
+        return RETURN_FAIL;
+    }
+    
+    /* Read GPHD data byte-by-byte (big-endian) */
+    src = (UBYTE *)sp->sp_Data;
+    
+    /* Read GPHD structure according to spec */
+    picture->gphd->gp_Width = (UWORD)((src[0] << 8) | src[1]);
+    picture->gphd->gp_Length = (UWORD)((src[2] << 8) | src[3]);
+    picture->gphd->gp_Page = (UWORD)((src[4] << 8) | src[5]);
+    
+    /* Read gp_ID[22] (20 chars NULL term) */
+    for (i = 0; i < 22; i++) {
+        picture->gphd->gp_ID[i] = src[6 + i];
+    }
+    
+    picture->gphd->gp_VRes = src[28];
+    picture->gphd->gp_BitRate = src[29];
+    picture->gphd->gp_PageWidth = src[30];
+    picture->gphd->gp_PageLength = src[31];
+    picture->gphd->gp_Compression = src[32];
+    picture->gphd->gp_ErrorCorrection = src[33];
+    picture->gphd->gp_BinaryFileTransfer = src[34];
+    picture->gphd->gp_ScanTime = src[35];
+    
+    /* Read DateStamp (12 bytes: 3 ULONGs - ds_Days, ds_Minute, ds_Tick) */
+    picture->gphd->gp_Date.ds_Days = (ULONG)((src[36] << 24) | (src[37] << 16) | (src[38] << 8) | src[39]);
+    picture->gphd->gp_Date.ds_Minute = (ULONG)((src[40] << 24) | (src[41] << 16) | (src[42] << 8) | src[43]);
+    picture->gphd->gp_Date.ds_Tick = (ULONG)((src[44] << 24) | (src[45] << 16) | (src[46] << 8) | src[47]);
+    
+    /* Read gp_Pad[10] */
+    for (i = 0; i < 10; i++) {
+        picture->gphd->gp_Pad[i] = src[48 + i];
+    }
+    
+    DEBUG_PRINTF3("DEBUG: ReadGPHD - Width=%ld Length=%ld Page=%ld\n",
+                 (ULONG)picture->gphd->gp_Width, (ULONG)picture->gphd->gp_Length,
+                 (ULONG)picture->gphd->gp_Page);
+    
+    return RETURN_OK;
+}
+
+/*
+** ReadFLOG - Read FLOG chunk (optional FAXX log information)
+** Returns: RETURN_OK on success, RETURN_FAIL on error (or if not found)
+** Follows iffparse.library pattern: FindProp
+**
+** FLOG contains log information about a received fax.
+** The specification for this chunk will be submitted at a later date.
+** For now, we just note its presence if present.
+*/
+LONG ReadFLOG(struct IFFPicture *picture)
+{
+    struct StoredProperty *sp;
+    
+    if (!picture || !picture->iff) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid picture or IFF handle");
+        }
+        return RETURN_FAIL;
+    }
+    
+    /* Find stored FLOG property (optional) */
+    sp = FindProp(picture->iff, picture->formtype, ID_FLOG);
+    if (!sp) {
+        /* FLOG is optional, so not finding it is not an error */
+        return RETURN_OK;
+    }
+    
+    DEBUG_PRINTF1("DEBUG: ReadFLOG - Found FLOG property, size=%ld\n", sp->sp_Size);
+    
+    /* FLOG specification is not yet finalized, so we just note its presence */
+    /* Future: Store FLOG data when specification is available */
     
     return RETURN_OK;
 }

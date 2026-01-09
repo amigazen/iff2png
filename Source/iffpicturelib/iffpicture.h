@@ -434,6 +434,8 @@ ULONG GetFormType(struct IFFPicture *picture);
 ULONG GetVPModes(struct IFFPicture *picture);
 UBYTE GetFAXXCompression(struct IFFPicture *picture);  /* Returns FAXX compression type (0=None, 1=MH, 2=MR, 4=MMR) */
 struct BitMapHeader *GetBMHD(struct IFFPicture *picture);
+struct FaxHeader *GetFXHD(struct IFFPicture *picture);  /* Returns FAXX header (FaxHeader structure) */
+struct GPHDHeader *GetGPHD(struct IFFPicture *picture);  /* Returns GPHD header if present (optional) */
 struct YCHDHeader *GetYCHD(struct IFFPicture *picture);
 struct IFFColorMap *GetIFFColorMap(struct IFFPicture *picture);
 UBYTE *GetPixelData(struct IFFPicture *picture);
@@ -716,6 +718,115 @@ struct YCHDHeader {
 
 /* YUVN Flags constants for YCHDHeader.ychd_Flags field */
 #define YCHDF_LACE  1  /* if set the data-chunks contain a full-frame (interlaced) picture */
+
+/*****************************************************************************/
+
+/* FAXX Header structures - public
+ *
+ * These structures represent the IFF FAXX (Facsimile Image) format chunks.
+ * FAXX format stores fax images using ITU-T T.4 compression methods.
+ *
+ * Note: Structures must match the IFF chunk layouts exactly (byte-packed)
+ * to allow direct reading from IFF files. Field order and types are
+ * critical for correct parsing.
+ */
+
+/* FaxHeader structure - FAXX header (FXHD chunk) */
+struct FaxHeader {
+    UWORD Width, Height;    /* Image width and height, in pixels */
+    UWORD LineLength;       /* Scan line length, in millimeters */
+    UWORD VRes;             /* Vertical Resolution, in lines/100mm */
+    UBYTE Compression;      /* Compression method (see FXCMP_* constants) */
+    UBYTE Pad[11];          /* Room for expansion */
+};
+
+/* FAXX LineLength codes for FaxHeader.LineLength field */
+#define FXLNGSTD    215     /* 1728 pixels along std line lng of 215mm */
+#define FXLNGLONG   255     /* 2048 pixels along opt line lng of 255mm */
+#define FXLNGLONGER 303     /* 2432 pixels along opt line lng of 303mm */
+#define FXLNGA5     151     /* 1216/1728 pixels along opt line lng of 151mm */
+#define FXLNGA6     107     /* 864/1728 pixels along opt line lng of 107mm */
+
+/* FAXX VRes codes for FaxHeader.VRes field */
+#define FXVRESNORM  385     /* Normal resolution: 3.85 lines/mm */
+#define FXVRESFINE  770     /* Fine resolution: 7.7 lines/mm */
+
+/* FAXX Compression codes for FaxHeader.Compression field */
+/* Codes 129, 130, and 131 are reserved */
+#define FXCMPNONE   0       /* No compression -- available under Group IV */
+#define FXCMPMH     1       /* One-dimensional (MH) coding */
+#define FXCMPMR     2       /* Two-dimensional (MR) coding */
+#define FXCMPMMR    4       /* Modified Two-dimensional (MMR) coding */
+
+/* GPHD Header structure - Additional FAXX header (GPHD chunk, optional)
+ * Used by some software producers as an extension to FXHD
+ */
+struct GPHDHeader {
+    UWORD gp_Width;         /* width in pels */
+    UWORD gp_Length;        /* length / height in pels */
+    UWORD gp_Page;          /* page number */
+    UBYTE gp_ID[22];        /* id string 20 ch NULL term */
+    UBYTE gp_VRes;          /* Vertical Res dpi (see GPHD_VRES_* constants) */
+    UBYTE gp_BitRate;       /* connection bit rate (see GPHD_BR_* constants) */
+    UBYTE gp_PageWidth;     /* page width (see GPHD_PW_* constants) */
+    UBYTE gp_PageLength;    /* page length/height (see GPHD_PH_* constants) */
+    UBYTE gp_Compression;   /* compression method (see GPHD_COMP_* constants) */
+    UBYTE gp_ErrorCorrection; /* ECM mode (see GPHD_ECM_* constants) */
+    UBYTE gp_BinaryFileTransfer; /* binary transfer mode (see GPHD_BFT_* constants) */
+    UBYTE gp_ScanTime;      /* Scan Time ms (see GPHD_ST_* constants) */
+    struct DateStamp gp_Date; /* date sent/received */
+    UBYTE gp_Pad[10];
+};
+
+/* GPHD VRes codes for GPHDHeader.gp_VRes field */
+#define GPHD_VRES_STD   0   /* standard mode 98 DPI */
+#define GPHD_VRES_FINE  1   /* fine res 198 DPI */
+
+/* GPHD Compression codes for GPHDHeader.gp_Compression field */
+#define GPHD_COMP_NONE  255 /* no compression- binary file */
+#define GPHD_COMP_1D    0   /* 1-D modified HUFFMAN */
+#define GPHD_COMP_2D    1   /* 2-D modified REED */
+#define GPHD_COMP_2DU   2   /* 2-D uncompressed REED */
+#define GPHD_COMP_2DM   3   /* 2-D modified modified REED */
+
+/* GPHD Scan Time codes for GPHDHeader.gp_ScanTime field */
+/* VR-std scan time / VR-fine */
+#define GPHD_ST_0_0MS     0  /* 0ms / 0ms */
+#define GPHD_ST_5_5MS     1  /* 5ms / 5ms */
+#define GPHD_ST_10_5MS    2  /* 10ms / 5ms */
+#define GPHD_ST_10_10MS   3  /* 10ms / 10ms */
+#define GPHD_ST_20_10MS   4  /* 20ms / 10ms */
+#define GPHD_ST_20_20MS   5  /* 20ms / 20ms */
+#define GPHD_ST_40_20MS   6  /* 40ms / 20ms */
+#define GPHD_ST_40_40MS   7  /* 40ms / 40ms */
+
+/* GPHD Page Width codes for GPHDHeader.gp_PageWidth field */
+#define GPHD_PW_1728     0  /* 1728 pels in 215 mm */
+#define GPHD_PW_2048     1  /* 2048 pels in 255 mm */
+#define GPHD_PW_2432     2  /* 2432 pels in 303 mm */
+#define GPHD_PW_1216     3  /* 1216 pels in 151 mm */
+#define GPHD_PW_864      4  /* 864 pels in 107 mm */
+
+/* GPHD Page Length codes for GPHDHeader.gp_PageLength field */
+#define GPHD_PH_UNLIM    0  /* unlimited page length */
+#define GPHD_PH_A4       1  /* A4 PAGE 297 mm */
+#define GPHD_PH_B4       2  /* B4 PAGE 364 mm */
+
+/* GPHD Bit Rate codes for GPHDHeader.gp_BitRate field */
+#define GPHD_BR_2400     0  /* 2400 bits per second */
+#define GPHD_BR_4800     1
+#define GPHD_BR_7200     2
+#define GPHD_BR_9600     3
+#define GPHD_BR_12000    4
+#define GPHD_BR_14400    5
+
+/* GPHD Error Correction codes for GPHDHeader.gp_ErrorCorrection field */
+#define GPHD_ECM_NONE    0  /* Error Correction Disabled */
+#define GPHD_ECM_STD     1  /* Error Correction Enabled */
+
+/* GPHD Binary File Transfer codes for GPHDHeader.gp_BinaryFileTransfer field */
+#define GPHD_BFT_NONE    0  /* Binary Transfer Disabled */
+#define GPHD_BFT_STD     1  /* Binary Transfer Enabled */
 
 /*****************************************************************************/
 
