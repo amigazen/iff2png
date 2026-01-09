@@ -55,6 +55,13 @@
 #define ID_GEOT    0x47454F54UL  /* 'GEOT' - GeoTIFF Meta Data */
 #define ID_GEOF    0x47454F46UL  /* 'GEOF' - GeoTIFF Meta Data Flags */
 #define ID_META    0x4D455441UL  /* 'META' - indicates metadata-only file (FORM type) */
+/* DEEP chunk IDs */
+#define ID_DGBL    0x4447424CUL  /* 'DGBL' - Deep GloBaL information */
+#define ID_DPEL    0x4450454CUL  /* 'DPEL' - Deep Pixel Elements */
+#define ID_DLOC    0x444C4F43UL  /* 'DLOC' - Deep display LOCation */
+#define ID_DBOD    0x44424F44UL  /* 'DBOD' - Deep data BODy */
+#define ID_DCHG    0x44434847UL  /* 'DCHG' - Deep CHanGe buffer */
+#define ID_TVDC    0x54564443UL  /* 'TVDC' - TVPaint Deep Compression */
 
 /* Viewport mode flags */
 #define vmLACE              0x0004UL
@@ -71,6 +78,29 @@
 /* Compression types */
 #define cmpNone         0
 #define cmpByteRun1     1
+
+/* DEEP compression types */
+#define DEEP_COMPRESS_NONE         0
+#define DEEP_COMPRESS_RUNLENGTH    1
+#define DEEP_COMPRESS_HUFFMAN     2
+#define DEEP_COMPRESS_DYNAMICHUFF 3
+#define DEEP_COMPRESS_JPEG        4
+#define DEEP_COMPRESS_TVDC        5
+
+/* DEEP component types (cType) */
+#define DEEP_TYPE_RED        1
+#define DEEP_TYPE_GREEN      2
+#define DEEP_TYPE_BLUE       3
+#define DEEP_TYPE_ALPHA      4
+#define DEEP_TYPE_YELLOW     5
+#define DEEP_TYPE_CYAN       6
+#define DEEP_TYPE_MAGENTA    7
+#define DEEP_TYPE_BLACK      8
+#define DEEP_TYPE_MASK       9
+#define DEEP_TYPE_ZBUFFER   10
+#define DEEP_TYPE_OPACITY   11
+#define DEEP_TYPE_LINEARKEY 12
+#define DEEP_TYPE_BINARYKEY 13
 
 /* HAM codes */
 #define HAMCODE_CMAP    0
@@ -177,6 +207,15 @@ struct IFFPicture {
     /* FAXX-specific: store original compression type */
     UBYTE faxxCompression;
     
+    /* DEEP-specific fields */
+    struct DGBLHeader *dgbl;      /* DEEP global header */
+    struct DPELHeader *dpel;       /* DEEP pixel elements */
+    struct DLOCHeader *dloc;       /* DEEP display location (current) */
+    ULONG dbodChunkSize;           /* DBOD chunk size */
+    ULONG dbodChunkPosition;       /* DBOD chunk position */
+    struct DCHGHeader *dchg;      /* DEEP change buffer (for animation) */
+    struct TVDCHeader *tvdc;       /* TVPaint compression table */
+    
     /* Metadata storage - allocated on demand */
     struct IFFPictureMeta *metadata;    /* Metadata structure, NULL if no metadata */
 };
@@ -196,6 +235,14 @@ LONG AnalyzeFormat(struct IFFPicture *picture);
 LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config, BOOL opaque);
 VOID SetIFFPictureError(struct IFFPicture *picture, LONG error, const char *message);
 VOID ReadAllMeta(struct IFFPicture *picture);
+
+/* DEEP chunk reader function prototypes - declared in iffpicture.c */
+LONG ReadDGBL(struct IFFPicture *picture);
+LONG ReadDPEL(struct IFFPicture *picture);
+LONG ReadDLOC(struct IFFPicture *picture);
+LONG ReadDBOD(struct IFFPicture *picture);
+LONG ReadDCHG(struct IFFPicture *picture);
+LONG ReadTVDC(struct IFFPicture *picture);
 
 #endif /* IFFPICTURE_PRIVATE_H */
 

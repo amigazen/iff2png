@@ -1445,162 +1445,386 @@ LONG DecodeEHB(struct IFFPicture *picture)
 }
 
 /*
+** DecompressDEEPRunLength - Decompress RUNLENGTH compressed DEEP data
+** Returns: Number of bytes decompressed, or -1 on error
+*/
+static LONG DecompressDEEPRunLength(struct IFFHandle *iff, UBYTE *dest, LONG destBytes)
+{
+    LONG bytesLeft = destBytes;
+    UBYTE *out = dest;
+    LONG bytesRead;
+    UBYTE code;
+    LONG count;
+    UBYTE value;
+    
+    while (bytesLeft > 0) {
+        /* Read control byte */
+        bytesRead = ReadChunkBytes(iff, &code, 1);
+        if (bytesRead != 1) {
+            return -1; /* Error reading */
+        }
+        
+        if (code <= 127) {
+            /* Literal run: (code+1) bytes follow */
+            count = code + 1;
+            if (count > bytesLeft) {
+                return -1; /* Would overflow */
+            }
+            bytesRead = ReadChunkBytes(iff, out, count);
+            if (bytesRead != count) {
+                return -1; /* Error reading */
+            }
+            out += count;
+            bytesLeft -= count;
+        } else {
+            /* Repeat run: next byte repeated (256-code)+1 times */
+            count = 256 - code;
+            if ((count + 1) > bytesLeft) {
+                return -1; /* Would overflow */
+            }
+            bytesRead = ReadChunkBytes(iff, &value, 1);
+            if (bytesRead != 1) {
+                return -1; /* Error reading */
+            }
+            /* Write count+1 bytes */
+            while (count >= 0) {
+                *out++ = value;
+                bytesLeft--;
+                count--;
+            }
+        }
+    }
+    
+    return destBytes;
+}
+
+/*
+** DecompressDEEPTVDC - Decompress TVDC (TVPaint Deep Compression) data
+** Returns: Number of bytes decompressed, or -1 on error
+** 
+** TVDC is a modified delta compression using a 16-word lookup table
+** and incorporates Run Length Limiting compression for short runs.
+** Compression is made line by line for each element of DPEL.
+*/
+static LONG DecompressDEEPTVDC(struct IFFHandle *iff, UBYTE *dest, LONG destBytes, WORD *table)
+{
+    LONG i;
+    LONG d;
+    LONG pos = 0;
+    UBYTE v = 0;
+    UBYTE *source;
+    UBYTE *sourceBuf;
+    LONG sourceSize;
+    LONG bytesRead;
+    
+    /* Estimate source size - TVDC typically compresses well, but worst case is same size */
+    /* We'll read in chunks as needed */
+    sourceSize = (destBytes + 1) / 2; /* Worst case: 2 source bytes per dest byte */
+    sourceBuf = (UBYTE *)AllocMem(sourceSize, MEMF_PUBLIC | MEMF_CLEAR);
+    if (!sourceBuf) {
+        return -1; /* Out of memory */
+    }
+    
+    /* Read compressed data */
+    bytesRead = ReadChunkBytes(iff, sourceBuf, sourceSize);
+    if (bytesRead < 0) {
+        FreeMem(sourceBuf, sourceSize);
+        return -1;
+    }
+    
+    source = sourceBuf;
+    
+    /* Decompress using TVDC algorithm from spec */
+    for (i = 0; i < destBytes; i++) {
+        d = source[pos >> 1];
+        if (pos++ & 1) {
+            d &= 0xf;
+        } else {
+            d >>= 4;
+        }
+        v += table[d];
+        dest[i] = v;
+        if (!table[d]) {
+            /* Run length encoding */
+            if (pos >= sourceSize * 2) {
+                /* Out of source data */
+                break;
+            }
+            d = source[pos >> 1];
+            if (pos++ & 1) {
+                d &= 0xf;
+            } else {
+                d >>= 4;
+            }
+            while (d-- && i < destBytes - 1) {
+                dest[++i] = v;
+            }
+        }
+    }
+    
+    FreeMem(sourceBuf, sourceSize);
+    return (pos + 1) / 2; /* Return source bytes consumed */
+}
+
+/*
 ** DecodeDEEP - Decode DEEP format to RGB (internal)
 ** Returns: RETURN_OK on success, RETURN_FAIL on error
 **
-** DEEP format stores true-color RGB as separate bitplanes:
-** - Planes 0-7: Red component (8 bits)
-** - Planes 8-15: Green component (8 bits)
-** - Planes 16-23: Blue component (8 bits)
-** - For 24-bit: nPlanes = 24
-** - Each component is decoded separately from bitplanes
+** DEEP format stores chunky pixels (consecutive memory locations) with
+** pixel structure defined by DPEL chunk. Supports various compression types
+** and pixel component types (RGB, RGBA, YCM, etc.).
 */
 LONG DecodeDEEP(struct IFFPicture *picture)
 {
-    UWORD width, height, depth;
-    UWORD rowBytes;
-    UBYTE *planeBuffer;
+    UWORD width, height;
+    UWORD displayWidth, displayHeight;
+    UWORD compression;
+    ULONG nElements;
+    ULONG pixelSizeBytes;
+    ULONG rowSizeBytes;
+    UBYTE *rowBuffer;
     UBYTE *rgbOut;
-    UWORD row, plane, col;
-    UBYTE planesPerColor;
-    UBYTE *rValues, *gValues, *bValues;
+    UWORD row, col;
+    ULONG elem;
     LONG bytesRead;
+    ULONG totalBits;
+    ULONG bytesPerPixel;
+    ULONG i;
+    BOOL hasRed, hasGreen, hasBlue, hasAlpha;
+    UBYTE redIdx, greenIdx, blueIdx, alphaIdx;
+    UBYTE redBits, greenBits, blueBits, alphaBits;
+    UBYTE *elementData;
+    ULONG elementOffset;
+    ULONG bitOffset;
+    ULONG value;
+    UBYTE shift;
     
-    if (!picture || !picture->bmhd) {
-        SetIFFPictureError(picture, IFFPICTURE_INVALID, "Missing BMHD for DEEP decoding");
+    if (!picture || !picture->dgbl || !picture->dpel) {
+        SetIFFPictureError(picture, IFFPICTURE_INVALID, "Missing DGBL or DPEL for DEEP decoding");
         return RETURN_FAIL;
     }
     
-    width = picture->bmhd->w;
-    height = picture->bmhd->h;
-    depth = picture->bmhd->nPlanes;
-    rowBytes = RowBytes(width);
+    /* Get dimensions from DLOC if present, otherwise from DGBL */
+    if (picture->dloc) {
+        width = picture->dloc->w;
+        height = picture->dloc->h;
+    } else {
+        width = picture->dgbl->DisplayWidth;
+        height = picture->dgbl->DisplayHeight;
+    }
     
-    /* DEEP typically uses 24 planes (8 per color) */
-    if (depth % 3 != 0) {
-        SetIFFPictureError(picture, IFFPICTURE_INVALID, "DEEP requires nPlanes divisible by 3");
+    displayWidth = picture->dgbl->DisplayWidth;
+    displayHeight = picture->dgbl->DisplayHeight;
+    compression = picture->dgbl->Compression;
+    nElements = picture->dpel->nElements;
+    
+    if (nElements == 0) {
+        SetIFFPictureError(picture, IFFPICTURE_INVALID, "DPEL has zero elements");
         return RETURN_FAIL;
     }
     
-    planesPerColor = depth / 3;
+    /* Calculate total bits per pixel and bytes per pixel (padded to byte boundary) */
+    totalBits = 0;
+    for (i = 0; i < nElements; i++) {
+        totalBits += picture->dpel->typedepth[i].cBitDepth;
+    }
+    bytesPerPixel = (totalBits + 7) / 8; /* Round up to byte boundary */
+    pixelSizeBytes = bytesPerPixel;
+    rowSizeBytes = (ULONG)width * pixelSizeBytes;
     
-    /* Allocate buffers */
-    planeBuffer = (UBYTE *)AllocMem(rowBytes, MEMF_PUBLIC | MEMF_CLEAR);
-    rValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
-    gValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
-    bValues = (UBYTE *)AllocMem(width, MEMF_PUBLIC | MEMF_CLEAR);
+    /* Find RGB/Alpha component indices */
+    hasRed = hasGreen = hasBlue = hasAlpha = FALSE;
+    redIdx = greenIdx = blueIdx = alphaIdx = 0;
+    redBits = greenBits = blueBits = alphaBits = 0;
     
-    if (!planeBuffer || !rValues || !gValues || !bValues) {
-        if (planeBuffer) FreeMem(planeBuffer, rowBytes);
-        if (rValues) FreeMem(rValues, width);
-        if (gValues) FreeMem(gValues, width);
-        if (bValues) FreeMem(bValues, width);
-        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate DEEP buffers");
+    for (i = 0; i < nElements; i++) {
+        switch (picture->dpel->typedepth[i].cType) {
+            case DEEP_TYPE_RED:
+                hasRed = TRUE;
+                redIdx = (UBYTE)i;
+                redBits = (UBYTE)picture->dpel->typedepth[i].cBitDepth;
+                break;
+            case DEEP_TYPE_GREEN:
+                hasGreen = TRUE;
+                greenIdx = (UBYTE)i;
+                greenBits = (UBYTE)picture->dpel->typedepth[i].cBitDepth;
+                break;
+            case DEEP_TYPE_BLUE:
+                hasBlue = TRUE;
+                blueIdx = (UBYTE)i;
+                blueBits = (UBYTE)picture->dpel->typedepth[i].cBitDepth;
+                break;
+            case DEEP_TYPE_ALPHA:
+                hasAlpha = TRUE;
+                alphaIdx = (UBYTE)i;
+                alphaBits = (UBYTE)picture->dpel->typedepth[i].cBitDepth;
+                break;
+        }
+    }
+    
+    /* Allocate pixel data buffer (RGB or RGBA) */
+    if (hasAlpha) {
+        picture->pixelDataSize = (ULONG)width * height * 4;
+        picture->hasAlpha = TRUE;
+    } else {
+        picture->pixelDataSize = (ULONG)width * height * 3;
+        picture->hasAlpha = FALSE;
+    }
+    picture->pixelData = (UBYTE *)AllocMem(picture->pixelDataSize, MEMF_PUBLIC | MEMF_CLEAR);
+    if (!picture->pixelData) {
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate DEEP pixel data buffer");
+        return RETURN_FAIL;
+    }
+    
+    /* Allocate row buffer for compressed/uncompressed data */
+    rowBuffer = (UBYTE *)AllocMem(rowSizeBytes, MEMF_PUBLIC | MEMF_CLEAR);
+    if (!rowBuffer) {
+        FreeMem(picture->pixelData, picture->pixelDataSize);
+        picture->pixelData = NULL;
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate DEEP row buffer");
         return RETURN_FAIL;
     }
     
     rgbOut = picture->pixelData;
     
-    /* Process each row */
+    /* Process each row - DEEP stores data line by line for each element */
     for (row = 0; row < height; row++) {
-        /* Clear component values */
-        for (col = 0; col < width; col++) {
-            rValues[col] = 0;
-            gValues[col] = 0;
-            bValues[col] = 0;
+        /* Allocate buffer for element data for this row */
+        elementData = (UBYTE *)AllocMem(rowSizeBytes, MEMF_PUBLIC | MEMF_CLEAR);
+        if (!elementData) {
+            FreeMem(rowBuffer, rowSizeBytes);
+            FreeMem(picture->pixelData, picture->pixelDataSize);
+            picture->pixelData = NULL;
+            SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate element data buffer");
+            return RETURN_FAIL;
         }
         
-        /* Decode Red component (planes 0 to planesPerColor-1) */
-        for (plane = 0; plane < planesPerColor; plane++) {
-            if (picture->bmhd->compression == cmpByteRun1) {
-                bytesRead = DecompressByteRun1(picture->iff, planeBuffer, rowBytes);
-                if (bytesRead != rowBytes) {
-                    goto cleanup_error;
-                }
-            } else {
-                bytesRead = ReadChunkBytes(picture->iff, planeBuffer, rowBytes);
-                if (bytesRead != rowBytes) {
-                    goto cleanup_error;
-                }
+        /* Read/decompress each element for this row */
+        elementOffset = 0;
+        for (elem = 0; elem < nElements; elem++) {
+            UWORD elementBits = picture->dpel->typedepth[elem].cBitDepth;
+            ULONG elementBytesPerPixel = (elementBits + 7) / 8;
+            ULONG elementRowBytes = (ULONG)width * elementBytesPerPixel;
+            
+            /* Read/decompress element data */
+            switch (compression) {
+                case DEEP_COMPRESS_NONE:
+                    bytesRead = ReadChunkBytes(picture->iff, rowBuffer, elementRowBytes);
+                    if (bytesRead != elementRowBytes) {
+                        FreeMem(elementData, rowSizeBytes);
+                        FreeMem(rowBuffer, rowSizeBytes);
+                        FreeMem(picture->pixelData, picture->pixelDataSize);
+                        picture->pixelData = NULL;
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read DEEP element data");
+                        return RETURN_FAIL;
+                    }
+                    break;
+                case DEEP_COMPRESS_RUNLENGTH:
+                    bytesRead = DecompressDEEPRunLength(picture->iff, rowBuffer, elementRowBytes);
+                    if (bytesRead != elementRowBytes) {
+                        FreeMem(elementData, rowSizeBytes);
+                        FreeMem(rowBuffer, rowSizeBytes);
+                        FreeMem(picture->pixelData, picture->pixelDataSize);
+                        picture->pixelData = NULL;
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "DEEP RUNLENGTH decompression failed");
+                        return RETURN_FAIL;
+                    }
+                    break;
+                case DEEP_COMPRESS_TVDC:
+                    if (!picture->tvdc) {
+                        FreeMem(elementData, rowSizeBytes);
+                        FreeMem(rowBuffer, rowSizeBytes);
+                        FreeMem(picture->pixelData, picture->pixelDataSize);
+                        picture->pixelData = NULL;
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "TVDC compression requires TVDC chunk");
+                        return RETURN_FAIL;
+                    }
+                    bytesRead = DecompressDEEPTVDC(picture->iff, rowBuffer, elementRowBytes, picture->tvdc->table);
+                    if (bytesRead < 0) {
+                        FreeMem(elementData, rowSizeBytes);
+                        FreeMem(rowBuffer, rowSizeBytes);
+                        FreeMem(picture->pixelData, picture->pixelDataSize);
+                        picture->pixelData = NULL;
+                        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "DEEP TVDC decompression failed");
+                        return RETURN_FAIL;
+                    }
+                    break;
+                case DEEP_COMPRESS_HUFFMAN:
+                case DEEP_COMPRESS_DYNAMICHUFF:
+                case DEEP_COMPRESS_JPEG:
+                default:
+                    FreeMem(elementData, rowSizeBytes);
+                    FreeMem(rowBuffer, rowSizeBytes);
+                    FreeMem(picture->pixelData, picture->pixelDataSize);
+                    picture->pixelData = NULL;
+                    SetIFFPictureError(picture, IFFPICTURE_UNSUPPORTED, "DEEP compression type not supported");
+                    return RETURN_FAIL;
             }
             
+            /* Copy element data to element buffer (interleaved by pixel) */
             for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8);
-                if (planeBuffer[byteIndex] & bit_mask[bitIndex]) {
-                    rValues[col] |= (1 << plane);
-                }
+                CopyMem(rowBuffer + col * elementBytesPerPixel,
+                       elementData + col * pixelSizeBytes + elementOffset,
+                       elementBytesPerPixel);
             }
+            elementOffset += elementBytesPerPixel;
         }
         
-        /* Decode Green component (planes planesPerColor to 2*planesPerColor-1) */
-        for (plane = 0; plane < planesPerColor; plane++) {
-            if (picture->bmhd->compression == cmpByteRun1) {
-                bytesRead = DecompressByteRun1(picture->iff, planeBuffer, rowBytes);
-                if (bytesRead != rowBytes) {
-                    goto cleanup_error;
+        /* Convert element data to RGB/RGBA output */
+            for (col = 0; col < width; col++) {
+            UBYTE *pixelData = elementData + col * pixelSizeBytes;
+            UBYTE r = 0, g = 0, b = 0, a = 255;
+            ULONG byteOffset = 0;
+            
+            /* Extract component values from pixel data (elements stored consecutively) */
+            for (elem = 0; elem < nElements; elem++) {
+                UWORD elementBits = picture->dpel->typedepth[elem].cBitDepth;
+                ULONG elementBytes = (elementBits + 7) / 8;
+                value = 0;
+                
+                /* Extract value from pixel data (big-endian, MSB first) */
+                for (i = 0; i < elementBytes; i++) {
+                    value = (value << 8) | pixelData[byteOffset + i];
                 }
-            } else {
-                bytesRead = ReadChunkBytes(picture->iff, planeBuffer, rowBytes);
-                if (bytesRead != rowBytes) {
-                    goto cleanup_error;
+                
+                /* Scale value to 8-bit if needed */
+                if (elementBits < 8) {
+                    value = (value * 255) / ((1UL << elementBits) - 1);
+                } else if (elementBits > 8) {
+                    value = value >> (elementBits - 8);
                 }
+                
+                /* Store in RGB/A components */
+                if (elem == redIdx && hasRed) {
+                    r = (UBYTE)value;
+                } else if (elem == greenIdx && hasGreen) {
+                    g = (UBYTE)value;
+                } else if (elem == blueIdx && hasBlue) {
+                    b = (UBYTE)value;
+                } else if (elem == alphaIdx && hasAlpha) {
+                    a = (UBYTE)value;
+                }
+                
+                byteOffset += elementBytes;
             }
             
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8);
-                if (planeBuffer[byteIndex] & bit_mask[bitIndex]) {
-                    gValues[col] |= (1 << plane);
-                }
-            }
-        }
-        
-        /* Decode Blue component (planes 2*planesPerColor to 3*planesPerColor-1) */
-        for (plane = 0; plane < planesPerColor; plane++) {
-            if (picture->bmhd->compression == cmpByteRun1) {
-                bytesRead = DecompressByteRun1(picture->iff, planeBuffer, rowBytes);
-                if (bytesRead != rowBytes) {
-                    goto cleanup_error;
-                }
+            /* Write RGB/RGBA output */
+            rgbOut[0] = r;
+            rgbOut[1] = g;
+            rgbOut[2] = b;
+            if (hasAlpha) {
+                rgbOut[3] = a;
+                rgbOut += 4;
             } else {
-                bytesRead = ReadChunkBytes(picture->iff, planeBuffer, rowBytes);
-                if (bytesRead != rowBytes) {
-                    goto cleanup_error;
-                }
-            }
-            
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8);
-                if (planeBuffer[byteIndex] & bit_mask[bitIndex]) {
-                    bValues[col] |= (1 << plane);
-                }
-            }
-        }
-        
-        /* Write RGB output */
-        for (col = 0; col < width; col++) {
-            rgbOut[0] = rValues[col];
-            rgbOut[1] = gValues[col];
-            rgbOut[2] = bValues[col];
             rgbOut += 3;
         }
     }
     
-    FreeMem(planeBuffer, rowBytes);
-    FreeMem(rValues, width);
-    FreeMem(gValues, width);
-    FreeMem(bValues, width);
-    return RETURN_OK;
+        FreeMem(elementData, rowSizeBytes);
+    }
     
-cleanup_error:
-    FreeMem(planeBuffer, rowBytes);
-    FreeMem(rValues, width);
-    FreeMem(gValues, width);
-    FreeMem(bValues, width);
-    SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read DEEP plane data");
-    return RETURN_FAIL;
+    FreeMem(rowBuffer, rowSizeBytes);
+    return RETURN_OK;
 }
 
 /*

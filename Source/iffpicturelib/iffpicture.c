@@ -24,6 +24,12 @@ LONG ReadBODY(struct IFFPicture *picture);
 LONG ReadABIT(struct IFFPicture *picture);
 LONG ReadFXHD(struct IFFPicture *picture);
 LONG ReadPAGE(struct IFFPicture *picture);
+LONG ReadDGBL(struct IFFPicture *picture);
+LONG ReadDPEL(struct IFFPicture *picture);
+LONG ReadDLOC(struct IFFPicture *picture);
+LONG ReadDBOD(struct IFFPicture *picture);
+LONG ReadDCHG(struct IFFPicture *picture);
+LONG ReadTVDC(struct IFFPicture *picture);
 static VOID FreeIFFPictureMeta(struct IFFPictureMeta *meta);
 
 /*
@@ -97,6 +103,31 @@ VOID FreeIFFPicture(struct IFFPicture *picture)
     if (picture->ychd) {
         FreeMem(picture->ychd, sizeof(struct YCHDHeader));
         picture->ychd = NULL;
+    }
+    
+    /* Free DEEP headers */
+    if (picture->dgbl) {
+        FreeMem(picture->dgbl, sizeof(struct DGBLHeader));
+        picture->dgbl = NULL;
+    }
+    if (picture->dpel) {
+        if (picture->dpel->typedepth) {
+            FreeMem(picture->dpel->typedepth, picture->dpel->nElements * sizeof(struct TypeDepth));
+        }
+        FreeMem(picture->dpel, sizeof(struct DPELHeader));
+        picture->dpel = NULL;
+    }
+    if (picture->dloc) {
+        FreeMem(picture->dloc, sizeof(struct DLOCHeader));
+        picture->dloc = NULL;
+    }
+    if (picture->dchg) {
+        FreeMem(picture->dchg, sizeof(struct DCHGHeader));
+        picture->dchg = NULL;
+    }
+    if (picture->tvdc) {
+        FreeMem(picture->tvdc, sizeof(struct TVDCHeader));
+        picture->tvdc = NULL;
     }
     
     /* Free color map */
@@ -476,13 +507,13 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
             SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set StopChunk for ABIT");
             return RETURN_FAIL;
         }
-    } else if (formType == ID_RGBN || formType == ID_RGB8 || formType == ID_DEEP) {
-        /* RGBN, RGB8, DEEP have BMHD and BODY */
+    } else if (formType == ID_RGBN || formType == ID_RGB8) {
+        /* RGBN, RGB8 have BMHD and BODY */
         if ((error = PropChunk(picture->iff, formType, ID_BMHD)) != 0) {
             SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set PropChunk for BMHD");
             return RETURN_FAIL;
         }
-        PropChunk(picture->iff, formType, ID_CMAP); /* Optional for DEEP */
+        PropChunk(picture->iff, formType, ID_CMAP); /* Optional */
         /* Extended metadata chunks - can appear in any FORM type */
         CollectionChunk(picture->iff, formType, ID_EXIF);
         CollectionChunk(picture->iff, formType, ID_IPTC);
@@ -494,6 +525,32 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
         CollectionChunk(picture->iff, formType, ID_GEOF);
         if ((error = StopChunk(picture->iff, formType, ID_BODY)) != 0) {
             SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set StopChunk for BODY");
+            return RETURN_FAIL;
+        }
+    } else if (formType == ID_DEEP) {
+        /* DEEP uses DGBL, DPEL, DLOC, DBOD, DCHG, TVDC chunks */
+        if ((error = PropChunk(picture->iff, formType, ID_DGBL)) != 0) {
+            SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set PropChunk for DGBL");
+            return RETURN_FAIL;
+        }
+        if ((error = PropChunk(picture->iff, formType, ID_DPEL)) != 0) {
+            SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set PropChunk for DPEL");
+            return RETURN_FAIL;
+        }
+        PropChunk(picture->iff, formType, ID_DLOC);  /* Optional */
+        PropChunk(picture->iff, formType, ID_DCHG);  /* Optional (animation) */
+        PropChunk(picture->iff, formType, ID_TVDC);  /* Optional (TVPaint compression) */
+        /* Extended metadata chunks - can appear in any FORM type */
+        CollectionChunk(picture->iff, formType, ID_EXIF);
+        CollectionChunk(picture->iff, formType, ID_IPTC);
+        CollectionChunk(picture->iff, formType, ID_XMP0);
+        PropChunk(picture->iff, formType, ID_XMP1);  /* XMP1 may occur only once */
+        CollectionChunk(picture->iff, formType, ID_ICCP);
+        CollectionChunk(picture->iff, formType, ID_ICCN);
+        CollectionChunk(picture->iff, formType, ID_GEOT);
+        CollectionChunk(picture->iff, formType, ID_GEOF);
+        if ((error = StopChunk(picture->iff, formType, ID_DBOD)) != 0) {
+            SetIFFPictureError(picture, IFFPICTURE_ERROR, "Failed to set StopChunk for DBOD");
             return RETURN_FAIL;
         }
     } else if (formType == ID_YUVN) {
@@ -611,8 +668,27 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
         
         /* YUVN data chunks are read during decoding, not during parsing */
         /* We just need to ensure the YCHD is loaded */
+    } else if (formType == ID_DEEP) {
+        /* DEEP uses DGBL, DPEL, DLOC, DBOD, DCHG, TVDC chunks */
+        if (ReadDGBL(picture) != RETURN_OK) {
+            return RETURN_FAIL; /* Error already set */
+        }
+        if (ReadDPEL(picture) != RETURN_OK) {
+            return RETURN_FAIL; /* Error already set */
+        }
+        ReadDLOC(picture); /* DLOC is optional, don't fail if missing */
+        ReadDCHG(picture); /* DCHG is optional, don't fail if missing */
+        ReadTVDC(picture); /* TVDC is optional, don't fail if missing */
+        
+        /* Read and store metadata chunks */
+        ReadAllMeta(picture);
+        
+        /* Read DBOD chunk */
+        if (ReadDBOD(picture) != RETURN_OK) {
+            return RETURN_FAIL; /* Error already set */
+        }
     } else {
-        /* ILBM, PBM, RGBN, RGB8, DEEP, ACBM use BMHD */
+        /* ILBM, PBM, RGBN, RGB8, ACBM use BMHD */
         if (ReadBMHD(picture) != RETURN_OK) {
             return RETURN_FAIL; /* Error already set */
         }
@@ -1378,6 +1454,318 @@ LONG ReadPAGE(struct IFFPicture *picture)
 }
 
 /*
+** ReadDGBL - Read DGBL chunk (Deep GloBaL information)
+** Returns: RETURN_OK on success, RETURN_FAIL on error
+** Follows iffparse.library pattern: FindProp
+*/
+LONG ReadDGBL(struct IFFPicture *picture)
+{
+    struct StoredProperty *sp;
+    struct DGBLHeader *dgbl;
+    UBYTE *src;
+    
+    if (!picture || !picture->iff) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid picture or IFF handle");
+        }
+        return RETURN_FAIL;
+    }
+    
+    /* Find stored DGBL property */
+    sp = FindProp(picture->iff, picture->formtype, ID_DGBL);
+    if (!sp) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "DGBL chunk not found");
+        return RETURN_FAIL;
+    }
+    
+    /* Check size - DGBL should be 8 bytes */
+    if (sp->sp_Size < 8) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "DGBL chunk too small");
+        return RETURN_FAIL;
+    }
+    
+    /* Allocate DGBL structure */
+    dgbl = (struct DGBLHeader *)AllocMem(sizeof(struct DGBLHeader), MEMF_PUBLIC | MEMF_CLEAR);
+    if (!dgbl) {
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate DGBLHeader");
+        return RETURN_FAIL;
+    }
+    
+    /* Read fields from byte array (big-endian) */
+    src = (UBYTE *)sp->sp_Data;
+    dgbl->DisplayWidth = (UWORD)((src[0] << 8) | src[1]);
+    dgbl->DisplayHeight = (UWORD)((src[2] << 8) | src[3]);
+    dgbl->Compression = (UWORD)((src[4] << 8) | src[5]);
+    dgbl->xAspect = src[6];
+    dgbl->yAspect = src[7];
+    
+    picture->dgbl = dgbl;
+    picture->isCompressed = (dgbl->Compression != DEEP_COMPRESS_NONE);
+    
+    return RETURN_OK;
+}
+
+/*
+** ReadDPEL - Read DPEL chunk (Deep Pixel Elements)
+** Returns: RETURN_OK on success, RETURN_FAIL on error
+** Follows iffparse.library pattern: FindProp
+*/
+LONG ReadDPEL(struct IFFPicture *picture)
+{
+    struct StoredProperty *sp;
+    struct DPELHeader *dpel;
+    UBYTE *src;
+    ULONG i;
+    ULONG expectedSize;
+    
+    if (!picture || !picture->iff) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid picture or IFF handle");
+        }
+        return RETURN_FAIL;
+    }
+    
+    /* Find stored DPEL property */
+    sp = FindProp(picture->iff, picture->formtype, ID_DPEL);
+    if (!sp) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "DPEL chunk not found");
+        return RETURN_FAIL;
+    }
+    
+    /* Check minimum size - need at least 4 bytes for nElements */
+    if (sp->sp_Size < 4) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "DPEL chunk too small");
+        return RETURN_FAIL;
+    }
+    
+    /* Allocate DPEL structure */
+    dpel = (struct DPELHeader *)AllocMem(sizeof(struct DPELHeader), MEMF_PUBLIC | MEMF_CLEAR);
+    if (!dpel) {
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate DPELHeader");
+        return RETURN_FAIL;
+    }
+    
+    /* Read nElements (ULONG, big-endian, 4 bytes) */
+    src = (UBYTE *)sp->sp_Data;
+    dpel->nElements = (ULONG)((src[0] << 24) | (src[1] << 16) | (src[2] << 8) | src[3]);
+    
+    /* Check that we have enough data for nElements TypeDepth structures */
+    expectedSize = 4 + (dpel->nElements * 4); /* 4 bytes per TypeDepth (2 UWORDs) */
+    if (sp->sp_Size < expectedSize) {
+        FreeMem(dpel, sizeof(struct DPELHeader));
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "DPEL chunk too small for nElements");
+        return RETURN_FAIL;
+    }
+    
+    /* Allocate TypeDepth array */
+    if (dpel->nElements > 0) {
+        dpel->typedepth = (struct TypeDepth *)AllocMem(dpel->nElements * sizeof(struct TypeDepth), MEMF_PUBLIC | MEMF_CLEAR);
+        if (!dpel->typedepth) {
+            FreeMem(dpel, sizeof(struct DPELHeader));
+            SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate TypeDepth array");
+            return RETURN_FAIL;
+        }
+        
+        /* Read TypeDepth structures */
+        src += 4; /* Skip nElements */
+        for (i = 0; i < dpel->nElements; i++) {
+            dpel->typedepth[i].cType = (UWORD)((src[0] << 8) | src[1]);
+            dpel->typedepth[i].cBitDepth = (UWORD)((src[2] << 8) | src[3]);
+            src += 4;
+        }
+    } else {
+        dpel->typedepth = NULL;
+    }
+    
+    picture->dpel = dpel;
+    
+    return RETURN_OK;
+}
+
+/*
+** ReadDLOC - Read DLOC chunk (Deep display LOCation)
+** Returns: RETURN_OK on success, RETURN_FAIL on error (optional chunk)
+** Follows iffparse.library pattern: FindProp
+*/
+LONG ReadDLOC(struct IFFPicture *picture)
+{
+    struct StoredProperty *sp;
+    struct DLOCHeader *dloc;
+    UBYTE *src;
+    
+    if (!picture || !picture->iff) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid picture or IFF handle");
+        }
+        return RETURN_FAIL;
+    }
+    
+    /* Find stored DLOC property (optional) */
+    sp = FindProp(picture->iff, picture->formtype, ID_DLOC);
+    if (!sp) {
+        /* DLOC is optional, return OK if not found */
+        return RETURN_OK;
+    }
+    
+    /* Check size - DLOC should be 8 bytes */
+    if (sp->sp_Size < 8) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "DLOC chunk too small");
+        return RETURN_FAIL;
+    }
+    
+    /* Allocate DLOC structure */
+    dloc = (struct DLOCHeader *)AllocMem(sizeof(struct DLOCHeader), MEMF_PUBLIC | MEMF_CLEAR);
+    if (!dloc) {
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate DLOCHeader");
+        return RETURN_FAIL;
+    }
+    
+    /* Read fields from byte array (big-endian) */
+    src = (UBYTE *)sp->sp_Data;
+    dloc->w = (UWORD)((src[0] << 8) | src[1]);
+    dloc->h = (UWORD)((src[2] << 8) | src[3]);
+    dloc->x = (WORD)((src[4] << 8) | src[5]);
+    dloc->y = (WORD)((src[6] << 8) | src[7]);
+    
+    picture->dloc = dloc;
+    
+    return RETURN_OK;
+}
+
+/*
+** ReadDBOD - Read DBOD chunk position and size
+** Returns: RETURN_OK on success, RETURN_FAIL on error
+** Follows iffparse.library pattern: CurrentChunk
+*/
+LONG ReadDBOD(struct IFFPicture *picture)
+{
+    struct ContextNode *cn;
+    
+    if (!picture || !picture->iff) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid picture or IFF handle");
+        }
+        return RETURN_FAIL;
+    }
+    
+    /* Get current chunk - should be DBOD after ParseIFF stops */
+    cn = CurrentChunk(picture->iff);
+    if (!cn) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "No current chunk (DBOD not found)");
+        return RETURN_FAIL;
+    }
+    
+    /* Verify it's the DBOD chunk */
+    if (cn->cn_ID != ID_DBOD || cn->cn_Type != picture->formtype) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Current chunk is not DBOD");
+        return RETURN_FAIL;
+    }
+    
+    /* Store DBOD chunk information for later reading */
+    picture->dbodChunkSize = cn->cn_Size;
+    picture->dbodChunkPosition = 0; /* We're positioned at start of DBOD chunk */
+    
+    return RETURN_OK;
+}
+
+/*
+** ReadDCHG - Read DCHG chunk (Deep CHanGe buffer)
+** Returns: RETURN_OK on success, RETURN_FAIL on error (optional chunk)
+** Follows iffparse.library pattern: FindProp
+*/
+LONG ReadDCHG(struct IFFPicture *picture)
+{
+    struct StoredProperty *sp;
+    struct DCHGHeader *dchg;
+    UBYTE *src;
+    
+    if (!picture || !picture->iff) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid picture or IFF handle");
+        }
+        return RETURN_FAIL;
+    }
+    
+    /* Find stored DCHG property (optional) */
+    sp = FindProp(picture->iff, picture->formtype, ID_DCHG);
+    if (!sp) {
+        /* DCHG is optional, return OK if not found */
+        return RETURN_OK;
+    }
+    
+    /* Check size - DCHG should be 4 bytes */
+    if (sp->sp_Size < 4) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "DCHG chunk too small");
+        return RETURN_FAIL;
+    }
+    
+    /* Allocate DCHG structure */
+    dchg = (struct DCHGHeader *)AllocMem(sizeof(struct DCHGHeader), MEMF_PUBLIC | MEMF_CLEAR);
+    if (!dchg) {
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate DCHGHeader");
+        return RETURN_FAIL;
+    }
+    
+    /* Read FrameRate (LONG, big-endian, 4 bytes) */
+    src = (UBYTE *)sp->sp_Data;
+    dchg->FrameRate = (LONG)((src[0] << 24) | (src[1] << 16) | (src[2] << 8) | src[3]);
+    
+    picture->dchg = dchg;
+    
+    return RETURN_OK;
+}
+
+/*
+** ReadTVDC - Read TVDC chunk (TVPaint Deep Compression)
+** Returns: RETURN_OK on success, RETURN_FAIL on error (optional chunk)
+** Follows iffparse.library pattern: FindProp
+*/
+LONG ReadTVDC(struct IFFPicture *picture)
+{
+    struct StoredProperty *sp;
+    struct TVDCHeader *tvdc;
+    UBYTE *src;
+    ULONG i;
+    
+    if (!picture || !picture->iff) {
+        if (picture) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "Invalid picture or IFF handle");
+        }
+        return RETURN_FAIL;
+    }
+    
+    /* Find stored TVDC property (optional) */
+    sp = FindProp(picture->iff, picture->formtype, ID_TVDC);
+    if (!sp) {
+        /* TVDC is optional, return OK if not found */
+        return RETURN_OK;
+    }
+    
+    /* Check size - TVDC should be 32 bytes (16 words) */
+    if (sp->sp_Size < 32) {
+        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "TVDC chunk too small");
+        return RETURN_FAIL;
+    }
+    
+    /* Allocate TVDC structure */
+    tvdc = (struct TVDCHeader *)AllocMem(sizeof(struct TVDCHeader), MEMF_PUBLIC | MEMF_CLEAR);
+    if (!tvdc) {
+        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate TVDCHeader");
+        return RETURN_FAIL;
+    }
+    
+    /* Read 16 words (big-endian, 2 bytes each) */
+    src = (UBYTE *)sp->sp_Data;
+    for (i = 0; i < 16; i++) {
+        tvdc->table[i] = (WORD)((src[0] << 8) | src[1]);
+        src += 2;
+    }
+    
+    picture->tvdc = tvdc;
+    
+    return RETURN_OK;
+}
+
 /*
 ** AllocIFFPictureMeta - Allocate metadata structure on demand (internal helper)
 ** Returns: Pointer to allocated metadata structure or NULL on failure

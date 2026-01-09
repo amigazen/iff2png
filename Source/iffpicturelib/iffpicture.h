@@ -719,6 +719,80 @@ struct YCHDHeader {
 
 /*****************************************************************************/
 
+/* DEEP Header structures - public
+ *
+ * These structures represent the IFF DEEP format chunks. DEEP format is
+ * designed for chunky pixel images with support for various color formats
+ * (RGB, RGBA, YCM, YCMB) and varying bit depths per component.
+ *
+ * Note: Structures must match the IFF chunk layouts exactly (byte-packed)
+ * to allow direct reading from IFF files. Field order and types are
+ * critical for correct parsing.
+ */
+
+/* DGBL Header structure - Deep GloBaL information (mandatory first chunk) */
+struct DGBLHeader {
+    UWORD DisplayWidth, DisplayHeight;  /* Size of source display */
+    UWORD Compression;                  /* Type of compression (see DEEP_COMPRESS_* constants) */
+    UBYTE xAspect, yAspect;             /* Pixel aspect ratio (width : height) */
+};
+
+/* TypeDepth structure - defines one pixel component in DPEL */
+struct TypeDepth {
+    UWORD cType;        /* Component type (see DEEP_TYPE_* constants) */
+    UWORD cBitDepth;    /* Bit depth for this component */
+};
+
+/* DPEL Header structure - Deep Pixel Elements (defines pixel structure) */
+struct DPELHeader {
+    ULONG nElements;                    /* Number of pixel components */
+    struct TypeDepth *typedepth;        /* Array of nElements TypeDepth structures
+                                         *   Allocated by the library, freed by FreeIFFPicture() */
+};
+
+/* DLOC Header structure - Deep display LOCation (optional) */
+struct DLOCHeader {
+    UWORD w, h;         /* Body width & height in pixels */
+    WORD  x, y;         /* Pixel position for this image */
+};
+
+/* DCHG Header structure - Deep CHanGe buffer (optional, for animation) */
+struct DCHGHeader {
+    LONG FrameRate;     /* Milliseconds between frame changes
+                         *   0 = as fast as possible
+                         *   -1 = end of frame, start of next (non-animated multi-frame) */
+};
+
+/* TVDC Header structure - TVPaint Deep Compression (optional extension) */
+struct TVDCHeader {
+    WORD table[16];     /* Delta lookup table (16 words = 32 bytes) */
+};
+
+/* DEEP compression type constants for DGBLHeader.Compression field */
+#define DEEP_COMPRESS_NONE         0  /* No compression */
+#define DEEP_COMPRESS_RUNLENGTH    1  /* Run-length encoding */
+#define DEEP_COMPRESS_HUFFMAN     2  /* Huffman compression */
+#define DEEP_COMPRESS_DYNAMICHUFF 3  /* Dynamic Huffman compression */
+#define DEEP_COMPRESS_JPEG        4  /* JPEG compression */
+#define DEEP_COMPRESS_TVDC        5  /* TVPaint Deep Compression (extension) */
+
+/* DEEP component type constants for TypeDepth.cType field */
+#define DEEP_TYPE_RED        1  /* Red component */
+#define DEEP_TYPE_GREEN      2  /* Green component */
+#define DEEP_TYPE_BLUE       3  /* Blue component */
+#define DEEP_TYPE_ALPHA      4  /* Alpha component (no precise definition of use) */
+#define DEEP_TYPE_YELLOW     5  /* Yellow component */
+#define DEEP_TYPE_CYAN       6  /* Cyan component */
+#define DEEP_TYPE_MAGENTA    7  /* Magenta component */
+#define DEEP_TYPE_BLACK      8  /* Black component */
+#define DEEP_TYPE_MASK       9  /* Mask component */
+#define DEEP_TYPE_ZBUFFER  10  /* Z-buffer component */
+#define DEEP_TYPE_OPACITY  11  /* Opacity component */
+#define DEEP_TYPE_LINEARKEY 12 /* Linear key component */
+#define DEEP_TYPE_BINARYKEY 13 /* Binary key component */
+
+/*****************************************************************************/
+
 /* IFF Form Type IDs
  *
  * These constants identify the different IFF image format variants.

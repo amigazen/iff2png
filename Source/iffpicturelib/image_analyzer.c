@@ -51,6 +51,46 @@ LONG AnalyzeFormat(struct IFFPicture *picture)
         return RETURN_OK;
     }
     
+    /* DEEP format uses DGBL/DPEL instead of BMHD */
+    if (picture->formtype == ID_DEEP) {
+        if (!picture->dgbl || !picture->dpel) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "DGBL or DPEL missing");
+            return RETURN_FAIL;
+        }
+        /* DEEP is not indexed, uses chunky pixels */
+        picture->isIndexed = FALSE;
+        picture->isCompressed = (picture->dgbl->Compression != DEEP_COMPRESS_NONE);
+        picture->isHAM = FALSE;
+        picture->isEHB = FALSE;
+        /* Check if grayscale - DEEP with only one element or no color elements */
+        {
+            ULONG i;
+            BOOL hasColor = FALSE;
+            for (i = 0; i < picture->dpel->nElements; i++) {
+                UWORD cType = picture->dpel->typedepth[i].cType;
+                if (cType == DEEP_TYPE_RED || cType == DEEP_TYPE_GREEN || 
+                    cType == DEEP_TYPE_BLUE || cType == DEEP_TYPE_YELLOW ||
+                    cType == DEEP_TYPE_CYAN || cType == DEEP_TYPE_MAGENTA) {
+                    hasColor = TRUE;
+                    break;
+                }
+            }
+            picture->isGrayscale = !hasColor;
+        }
+        /* Alpha is determined by presence of ALPHA element in DPEL */
+        {
+            ULONG i;
+            picture->hasAlpha = FALSE;
+            for (i = 0; i < picture->dpel->nElements; i++) {
+                if (picture->dpel->typedepth[i].cType == DEEP_TYPE_ALPHA) {
+                    picture->hasAlpha = TRUE;
+                    break;
+                }
+            }
+        }
+        return RETURN_OK;
+    }
+    
     if (!picture->bmhd) {
         SetIFFPictureError(picture, IFFPICTURE_INVALID, "BMHD missing");
         return RETURN_FAIL;
@@ -84,7 +124,7 @@ LONG AnalyzeFormat(struct IFFPicture *picture)
     } else if (!picture->isIndexed && picture->bmhd->nPlanes == 1) {
         /* 1-bit non-indexed images are typically grayscale */
         picture->isGrayscale = TRUE;
-    } else if (picture->formtype == ID_DEEP || picture->formtype == ID_RGBN || 
+    } else if (picture->formtype == ID_RGBN || 
                picture->formtype == ID_RGB8 || picture->isHAM ||
                (picture->formtype == ID_ILBM && picture->bmhd->nPlanes == 24)) {
         /* True-color formats are not grayscale by default */
@@ -133,6 +173,27 @@ LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config, B
         return RETURN_OK;
     }
     
+    /* DEEP format uses DGBL/DPEL instead of BMHD */
+    if (picture->formtype == ID_DEEP) {
+        if (!picture->dgbl || !picture->dpel) {
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "DGBL or DPEL missing");
+            return RETURN_FAIL;
+        }
+        /* DEEP is always RGB or RGBA */
+        if (picture->hasAlpha) {
+            config->color_type = PNG_COLOR_TYPE_RGBA;
+        } else {
+            config->color_type = PNG_COLOR_TYPE_RGB;
+        }
+        config->bit_depth = 8;
+        config->has_alpha = picture->hasAlpha;
+        config->palette = NULL;
+        config->num_palette = 0;
+        config->trans = NULL;
+        config->num_trans = 0;
+        return RETURN_OK;
+    }
+    
     if (!picture->bmhd) {
         SetIFFPictureError(picture, IFFPICTURE_INVALID, "BMHD missing");
         return RETURN_FAIL;
@@ -155,7 +216,7 @@ LONG GetOptimalPNGConfig(struct IFFPicture *picture, struct PNGConfig *config, B
     
     /* Determine optimal PNG format based on image characteristics */
     /* 24-bit ILBM (nPlanes == 24) is true-color, not indexed */
-    if (picture->isHAM || picture->isEHB || picture->formtype == ID_DEEP || 
+    if (picture->isHAM || picture->isEHB || 
         picture->formtype == ID_RGBN || picture->formtype == ID_RGB8 ||
         (picture->formtype == ID_ILBM && picture->bmhd->nPlanes == 24)) {
         /* True-color formats - use RGB or RGBA */
@@ -360,6 +421,30 @@ ULONG BestPictureModeID(struct IFFPicture *picture, struct ViewPort *sourceViewP
         height = picture->ychd->ychd_Height;
         /* YUVN is always 24-bit RGB equivalent */
         depth = 24;
+    } else if (picture->formtype == ID_DEEP) {
+        if (!picture->dgbl || !picture->dpel) {
+            CloseLibrary(GraphicsBase);
+            SetIFFPictureError(picture, IFFPICTURE_INVALID, "DGBL or DPEL missing");
+            return INVALID_ID;
+        }
+        /* Get dimensions from DLOC if present, otherwise from DGBL */
+        if (picture->dloc) {
+            width = picture->dloc->w;
+            height = picture->dloc->h;
+        } else {
+            width = picture->dgbl->DisplayWidth;
+            height = picture->dgbl->DisplayHeight;
+        }
+        /* Calculate depth from DPEL elements */
+        {
+            ULONG i;
+            depth = 0;
+            for (i = 0; i < picture->dpel->nElements; i++) {
+                depth += picture->dpel->typedepth[i].cBitDepth;
+            }
+            /* Cap at 32 for display purposes */
+            if (depth > 32) depth = 32;
+        }
     } else {
         if (!picture->bmhd) {
             CloseLibrary(GraphicsBase);
