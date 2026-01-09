@@ -85,6 +85,7 @@ int main(int argc, char **argv)
     if (!rdargs) {
         /* ReadArgs returns NULL on failure (e.g., missing required /A arguments) */
         PutStr((STRPTR)USAGE);
+        PrintFault(IoErr(), "iff2png");
         CloseLibrary(IFFParseBase);
         IFFParseBase = NULL;
         return (int)RETURN_FAIL;
@@ -121,9 +122,7 @@ int main(int argc, char **argv)
     /* Check if input file exists */
     lock = Lock((STRPTR)sourceFile, ACCESS_READ);
     if (!lock) {
-        PutStr("Error: Input file does not exist: ");
-        PutStr((STRPTR)sourceFile);
-        PutStr("\n");
+        PrintFault(IoErr(), "iff2png");
         CloseLibrary(IFFParseBase);
         IFFParseBase = NULL;
         return (int)RETURN_FAIL;
@@ -135,9 +134,7 @@ int main(int argc, char **argv)
         if (fib.fib_DirEntryType > 0) {
             /* It's a directory, not a file */
             UnLock(lock);
-            PutStr("Error: Input path is a directory, not a file: ");
-            PutStr((STRPTR)sourceFile);
-            PutStr("\n");
+            PutStr("iff2png: Input path is a directory, not a file\n");
             CloseLibrary(IFFParseBase);
             IFFParseBase = NULL;
             return (int)RETURN_FAIL;
@@ -154,9 +151,7 @@ int main(int argc, char **argv)
             if (fib.fib_DirEntryType > 0) {
                 /* It's a directory */
                 UnLock(lock);
-                PutStr("Error: Output path is a directory: ");
-                PutStr((STRPTR)targetFile);
-                PutStr("\n");
+                PutStr("iff2png: Output path is a directory\n");
                 CloseLibrary(IFFParseBase);
                 IFFParseBase = NULL;
                 return (int)RETURN_FAIL;
@@ -190,9 +185,7 @@ int main(int argc, char **argv)
         BPTR filehandle;
         filehandle = Open((STRPTR)sourceFile, MODE_OLDFILE);
         if (!filehandle) {
-            PutStr("Error: Cannot open IFF file: ");
-            PutStr((STRPTR)sourceFile);
-            PutStr("\n");
+            PrintFault(IoErr(), "iff2png");
             FreeIFFPicture(picture);
             CloseLibrary(IFFParseBase);
             IFFParseBase = NULL;
@@ -491,9 +484,7 @@ int main(int argc, char **argv)
     /* Write PNG file - use local copy of filename */
     result = PNGEncoder_Write((const char *)targetFile, rgbData, &config, picture, stripMetadata);
     if (result != RETURN_OK) {
-        PutStr("Error: Cannot write PNG file: ");
-        PutStr((STRPTR)targetFile);
-        PutStr("\n");
+        PrintFault(IoErr(), "iff2png");
         PNGEncoder_FreeConfig(&config); /* Free palette/trans if allocated */
         /* Note: rgbData points to picture->pixelData, which is freed by FreeIFFPicture() */
         /* IFF context and file handle already closed in block above */

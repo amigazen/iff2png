@@ -1,0 +1,581 @@
+@DATABASE "iff2png.guide"
+@AUTHOR "amigazen project"
+@HELP "main"
+@INDEX "index"
+
+@NODE "main" "iff2png - IFF to PNG Converter"
+Convert IFF images to PNG format
+
+iff2png is a comprehensive command-line tool for converting IFF (Interchange File Format) bitmap images to PNG format. It supports all major IFF image formats and automatically selects the optimal PNG encoding based on source image properties.
+
+@{"Overview" LINK "overview"}
+@{"Usage" LINK "usage"}
+@{"Command Line Options" LINK "options"}
+@{"Supported Formats" LINK "formats"}
+@{"PNG Output" LINK "png"}
+@{"Examples" LINK "examples"}
+@{"Troubleshooting" LINK "troubleshooting"}
+@{"Technical Details" LINK "technical"}
+@{"Library API" LINK "api"}
+@{"Development" LINK "development"}
+@{"License" LINK "license"}
+@{"Support" LINK "support"}
+@{"Version History" LINK "changelog"}
+@{"Index" LINK "index"}
+@ENDNODE
+
+@NODE "overview" "Overview"
+Convert IFF images to PNG format
+
+iff2png is designed to convert IFF bitmap images to PNG format while preserving image quality, transparency, and metadata. The tool automatically analyzes the source image and selects the optimal PNG encoding settings.
+
+@{"Main Index" LINK "main"}
+@{"Usage Information" LINK "usage"}
+
+Key Features:
+? Supports all major IFF formats (ILBM, PBM, RGBN, RGB8, DEEP, ACBM, FAXX)
+? Handles 24-bit ILBM (deep ILBM with true-color RGB)
+? Automatic optimal PNG encoding based on source properties
+? Preserves transparency and alpha channels
+? Supports HAM (Hold And Modify) and EHB (Extra Half-Brite) modes
+? Handles ByteRun1 compression and ITU-T T.4 fax compression
+? Preserves metadata (copyright, author, annotations)
+? Optional opaque mode for legacy color 0 handling
+? Detailed conversion information output
+
+The tool uses the IFFPicture library which provides a comprehensive API for IFF image processing, following the iffparse.library pattern for consistency with AmigaOS standards.
+@ENDNODE
+
+@NODE "usage" "Usage"
+Convert IFF images to PNG format
+
+iff2png is a command-line tool that converts IFF images to PNG format.
+
+@{"Main Index" LINK "main"}
+@{"Command Line Options" LINK "options"}
+
+Basic Syntax:
+iff2png SOURCE TARGET [OPTIONS]
+
+Required Arguments:
+? SOURCE - Input IFF image file (required)
+? TARGET - Output PNG file (required)
+
+Optional Switches:
+? FORCE - Overwrite existing output file without prompting
+? QUIET - Suppress normal output messages (errors still displayed)
+? OPAQUE - Keep color 0 opaque instead of transparent (legacy behavior)
+? STRIP or NOMETADATA - Remove metadata from output PNG
+
+Note: File extension is not used to recognize file types. The tool reads the IFF file structure to determine the format.
+
+Examples:
+iff2png source.iff ram:target.png
+iff2png source.iff target.png FORCE QUIET
+iff2png source.iff target.png OPAQUE
+iff2png source.iff target.png STRIP
+
+Output:
+When not in quiet mode, iff2png displays detailed information about:
+? IFF source format, file size, dimensions, bit planes
+? Compression method and masking information
+? PNG target color type, bit depth, palette entries
+? Transparency settings
+? Conversion summary with file sizes and compression ratio
+@ENDNODE
+
+@NODE "options" "Command Line Options"
+Convert IFF images to PNG format
+
+Detailed explanation of all command-line options for iff2png.
+
+@{"Main Index" LINK "main"}
+@{"Usage Information" LINK "usage"}
+
+FORCE:
+Overwrites existing output file without prompting. Without this option, iff2png will refuse to overwrite an existing file.
+
+Example:
+iff2png source.iff target.png FORCE
+
+QUIET:
+Suppresses normal output messages. Error messages are still displayed. Useful for batch processing or scripts.
+
+Example:
+iff2png source.iff target.png QUIET
+
+OPAQUE:
+Keeps color 0 opaque instead of transparent. By default, iff2png honors the ILBM specification where palette index 0 can be transparent. This option preserves legacy behavior where black (color 0) is always visible.
+
+Example:
+iff2png source.iff target.png OPAQUE
+
+STRIP or NOMETADATA:
+Prevents any metadata text (copyright, author, annotations) from the source IFF file being included in the target PNG. By default, metadata is preserved in PNG tEXt chunks.
+
+Example:
+iff2png source.iff target.png STRIP
+@ENDNODE
+
+@NODE "formats" "Supported IFF Formats"
+Convert IFF images to PNG format
+
+iff2png supports all major IFF image formats used on Amiga systems.
+
+@{"Main Index" LINK "main"}
+@{"PNG Output" LINK "png"}
+
+ILBM (InterLeaved BitMap):
+Standard Amiga bitmap format with interleaved bitplanes. Supports HAM (Hold And Modify), EHB (Extra Half-Brite), and various bitplane counts. Also supports 24-bit ILBM (deep ILBM with 24 bitplanes for true-color RGB, where bitplanes 0-7 represent Red, 8-15 represent Green, and 16-23 represent Blue).
+
+PBM (Packed BitMap):
+Similar to ILBM but with packed pixels (one byte per pixel) instead of bitplanes. Note: This is not the same as NetPBM.
+
+RGBN:
+RGB format with N planes (true-color with separate RGB channels). N indicates the number of bits per channel.
+
+RGB8:
+RGB 8-bit format (24-bit color, 32-bit with alpha). True-color format with 8 bits per RGB channel.
+
+DEEP:
+High bit-depth format for professional graphics. Supports more than 8 bits per channel.
+
+ACBM (Amiga Continuous BitMap):
+Format with separate alpha channel data in an ABIT chunk. Similar to ILBM but with transparency support.
+
+FAXX:
+Facsimile image format using ITU-T T.4 compression (Modified Huffman, Modified READ, Modified Modified READ). Typically black and white images for fax transmission.
+
+YUVN:
+YUV color space format for broadcast television (CCIR-601-2 standard). Note: YUVN support is planned but not yet implemented.
+
+Compression Methods:
+? ByteRun1 (RLE) - Standard IFF compression
+? Modified Huffman (MH) - FAXX compression
+? Modified READ (MR) - FAXX compression
+? Modified Modified READ (MMR) - FAXX compression
+@ENDNODE
+
+@NODE "png" "PNG Output"
+Convert IFF images to PNG format
+
+iff2png automatically selects the optimal PNG encoding based on the source image properties.
+
+@{"Main Index" LINK "main"}
+@{"Supported Formats" LINK "formats"}
+
+Color Types:
+? Grayscale - For 1-bit and grayscale indexed images
+? Palette - For indexed color images (optimized bit depth)
+? RGB - For true-color images (HAM, EHB, RGBN, RGB8, DEEP, 24-bit ILBM)
+? RGBA - For images with alpha channel or transparency
+
+Bit Depths:
+Automatically optimized based on palette size:
+? 1-bit - For 2 colors
+? 2-bit - For 4 colors
+? 4-bit - For 16 colors
+? 8-bit - For 256 colors or true-color
+
+Transparency:
+? Palette transparency (tRNS) - For indexed images with transparent color
+? Alpha channel - For images with mask plane or alpha data
+? Automatic detection based on BMHD masking field
+
+Compression:
+? Deflate (zlib) - Standard PNG compression
+? Adaptive filtering - Automatic filter selection per scanline
+
+Metadata:
+? Copyright - Preserved from IFF Copyright chunk
+? Author - Preserved from IFF AUTH chunk
+? Annotations - Preserved from IFF ANNO chunks
+? Can be stripped with STRIP option
+
+The tool uses libpng version 1.6.43 for PNG encoding, ensuring compatibility with all standard PNG viewers and tools.
+@ENDNODE
+
+@NODE "examples" "Examples"
+Convert IFF images to PNG format
+
+Practical examples of using iff2png for various conversion scenarios.
+
+@{"Main Index" LINK "main"}
+@{"Usage Information" LINK "usage"}
+
+Basic Conversion:
+Convert a standard ILBM image to PNG:
+iff2png sys:prefs/Presets/Backdrops/default_pal.iff ram:out.png
+
+Batch Processing:
+Convert multiple files with quiet mode:
+iff2png file1.iff file1.png QUIET
+iff2png file2.iff file2.png QUIET
+iff2png file3.iff file3.png QUIET
+
+Force Overwrite:
+Overwrite existing PNG file:
+iff2png source.iff target.png FORCE
+
+Preserve Black as Visible:
+Use opaque mode for legacy compatibility:
+iff2png source.iff target.png OPAQUE
+
+Remove Metadata:
+Strip metadata from output:
+iff2png source.iff target.png STRIP
+
+Combined Options:
+Use multiple options together:
+iff2png source.iff target.png FORCE QUIET OPAQUE
+
+FAXX Format:
+Convert fax image to PNG:
+iff2png faximage.faxx faximage.png
+
+24-bit ILBM:
+Convert deep ILBM with true-color:
+iff2png deepimage.iff deepimage.png
+
+HAM/EHB Images:
+Convert HAM or EHB images (automatically handled):
+iff2png hamimage.iff hamimage.png
+@ENDNODE
+
+@NODE "troubleshooting" "Troubleshooting"
+Convert IFF images to PNG format
+
+Common issues and solutions when using iff2png.
+
+@{"Main Index" LINK "main"}
+@{"Usage Information" LINK "usage"}
+
+Common Problems:
+
+File Not Found:
+? Check that input file exists and path is correct
+? Use full path if file is not in current directory
+? Verify file permissions allow reading
+
+Invalid IFF File:
+? File may be corrupted or not a valid IFF format
+? Check file with IFF viewer to verify format
+? Ensure file is complete and not truncated
+
+Unsupported Format:
+? Verify format is one of the supported types
+? Check if format variant is supported
+? YUVN format is not yet implemented
+
+Memory Errors:
+? Ensure sufficient system memory available
+? Large images require more memory
+? Check available chip and fast RAM
+
+Output File Errors:
+? Check disk space available
+? Verify write permissions on target directory
+? Use FORCE option to overwrite existing files
+
+Transparency Issues:
+? Use OPAQUE option if color 0 should be visible
+? Check BMHD masking field in source file
+? Verify PNG viewer supports transparency
+
+Metadata Not Preserved:
+? Check if source IFF contains metadata chunks
+? Use STRIP option only if you want to remove metadata
+? Verify PNG viewer displays tEXt chunks
+
+Performance Tips:
+
+Large Images:
+? Conversion may take time for very large images
+? Use QUIET mode to reduce output overhead
+? Consider image dimensions and bit depth
+
+Batch Processing:
+? Use QUIET mode for automated scripts
+? Check return codes for error handling
+? Process files sequentially for stability
+
+Error Messages:
+? Read error messages carefully for details
+? Check IFF file structure if parsing fails
+? Verify library versions are compatible
+@ENDNODE
+
+@NODE "technical" "Technical Details"
+Convert IFF images to PNG format
+
+Technical information about iff2png's implementation and architecture.
+
+@{"Main Index" LINK "main"}
+@{"Library API" LINK "api"}
+
+Libraries Used:
+? libpng 1.6.43 - PNG encoding
+? zlib 1.2.11 - Compression support
+
+@ENDNODE
+
+@NODE "api" "IFFPicture Library API"
+Convert IFF images to PNG format
+
+The IFFPicture library provides a comprehensive API for IFF image processing, following the iffparse.library pattern.
+
+@{"Main Index" LINK "main"}
+@{"Technical Details" LINK "technical"}
+
+Core Functions:
+
+AllocIFFPicture():
+Creates and initializes a new IFFPicture structure. Returns pointer or NULL on failure.
+
+FreeIFFPicture():
+Deallocates all resources associated with an IFFPicture structure. Must be called after CloseIFFPicture().
+
+InitIFFPictureasDOS():
+Initializes the IFFPicture to operate on DOS streams. Allocates internal IFFHandle structure.
+
+OpenIFFPicture():
+Prepares an IFFPicture to read or write a new IFF stream. Requires iff_Stream to be set first.
+
+CloseIFFPicture():
+Closes the IFF context. Does not close the file handle (caller responsibility).
+
+ParseIFFPicture():
+Parses the IFF file structure and reads property chunks (BMHD, CMAP, CAMG, etc.).
+
+DecodeToRGB():
+Decodes the IFF image and converts it to RGB format. Allocates RGB buffer.
+
+GetOptimalPNGConfig():
+Determines optimal PNG encoding configuration based on image properties.
+
+BestPictureModeID():
+Determines the best Amiga screenmode for displaying the IFF image.
+
+Metadata Functions:
+? ReadGRAB() - Hotspot coordinates
+? ReadDEST() - Destination merge information
+? ReadSPRT() - Sprite precedence
+? ReadCRNG() / ReadAllCRNG() - Color ranges
+? ReadCopyright() - Copyright text
+? ReadAuthor() - Author information
+? ReadAnnotation() / ReadAllAnnotations() - Annotations
+? ReadText() / ReadAllTexts() - Text chunks
+
+All metadata functions return pointers to library-owned memory. Pointers are valid until FreeIFFPicture() is called.
+
+For complete API documentation, see SDK/doc/iffpicture.doc
+@ENDNODE
+
+@NODE "development" "Development"
+Convert IFF images to PNG format
+
+Information for developers who want to extend or modify iff2png.
+
+@{"Main Index" LINK "main"}
+@{"Library API" LINK "api"}
+
+Building:
+? SAS/C compiler support
+? SMakefile build system
+? SCOPTIONS configuration
+? Standard Amiga development tools
+? Requires zlib and libpng to be built first
+
+@ENDNODE
+
+@NODE "license" "License and Copyright"
+Convert IFF images to PNG format
+
+Legal information and licensing details for iff2png.
+
+@{"Main Index" LINK "main"}
+
+Copyright:
+(c) 2025 amigazen project
+All rights reserved.
+
+License:
+BSD 2-Clause License
+
+Copyright (c) 2025 amigazen project
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Distribution:
+? Free for personal, educational, and commercial use
+? Source code redistribution permitted with license terms
+? Binary redistribution permitted with license terms
+? Modifications allowed with license compliance
+? Source code available for study and modification
+
+Third-Party Libraries:
+
+zlib:
+Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
+zlib license - see zlib.h for details
+
+libpng:
+Copyright (c) 1995-2024 The PNG Reference Library Authors
+libpng license - see libpng/LICENSE for details
+
+Disclaimer:
+? No warranty provided
+? Not responsible for data loss
+? Use in production at own risk
+? Test thoroughly before deployment
+@ENDNODE
+
+@NODE "support" "Support and Contact"
+Convert IFF images to PNG format
+
+How to get help and support for iff2png.
+
+@{"Main Index" LINK "main"}
+
+Documentation:
+? This AmigaGuide file
+? README.md - General information
+? iff2png.readme - Aminet readme
+? SDK/doc/iffpicture.doc - Library API reference
+? Source code comments
+
+Troubleshooting:
+? Check error messages carefully
+? Verify IFF file format
+? Review system requirements
+? Test with known good files
+
+Development:
+? Source code available on GitHub
+? Extensible architecture
+? Well-documented API
+? Standard Amiga practices
+
+Community:
+? GitHub: https://github.com/amigazen/iff2png/
+? Web: http://www.amigazen.com/toolkit/
+? Email: toolkit@amigazen.com
+? Pull requests welcome
+
+Reporting Issues:
+? Include error messages
+? Provide sample IFF file if possible
+? Specify AmigaOS version
+? Describe steps to reproduce
+? Check existing issues first
+@ENDNODE
+
+@NODE "changelog" "Version History"
+Convert IFF images to PNG format
+
+History of changes and improvements in iff2png.
+
+@{"Main Index" LINK "main"}
+
+Version 1.3 (21.12.2025):
+? Initial release
+? Support for all major IFF formats
+? Automatic PNG optimization
+? Metadata preservation
+? HAM/EHB support
+? FAXX format support
+? 24-bit ILBM support
+? Command-line interface
+? IFFPicture library API
+
+Features:
+? ILBM, PBM, RGBN, RGB8, DEEP, ACBM, FAXX support
+? 24-bit ILBM (deep ILBM) support
+? Automatic color type and bit depth optimization
+? Transparency and alpha channel handling
+? Metadata reading and preservation
+? ByteRun1 and ITU-T T.4 compression
+? HAM and EHB mode support
+? Comprehensive error handling
+
+Technical:
+? C89/ANSI C compliance
+? SAS/C compiler support
+? SMakefile build system
+? Memory-safe operations
+? Library-owned memory model
+? iffparse.library pattern compliance
+? libpng 1.6.43 integration
+? zlib 1.2.11 integration
+
+Future Plans:
+? YUVN format support
+? Additional metadata chunk types
+? Performance optimizations
+? Extended format support
+@ENDNODE
+
+@NODE "index" "Index"
+Convert IFF images to PNG format
+
+Quick reference index for iff2png documentation.
+
+@{"Main Index" LINK "main"}
+
+Getting Started:
+@{"Overview" LINK "overview"}
+@{"Usage" LINK "usage"}
+@{"Command Line Options" LINK "options"}
+
+Format Information:
+@{"Supported Formats" LINK "formats"}
+@{"PNG Output" LINK "png"}
+
+Reference:
+@{"Examples" LINK "examples"}
+@{"Troubleshooting" LINK "troubleshooting"}
+@{"Technical Details" LINK "technical"}
+@{"Library API" LINK "api"}
+
+Advanced Topics:
+@{"Development" LINK "development"}
+@{"License" LINK "license"}
+@{"Support" LINK "support"}
+@{"Version History" LINK "changelog"}
+
+Quick Commands:
+? iff2png source.iff target.png - Basic conversion
+? iff2png source.iff target.png FORCE - Overwrite existing
+? iff2png source.iff target.png QUIET - Suppress output
+? iff2png source.iff target.png OPAQUE - Keep color 0 visible
+? iff2png source.iff target.png STRIP - Remove metadata
+
+Common Formats:
+? ILBM - Standard Amiga bitmap
+? PBM - Packed bitmap
+? RGBN - RGB with N planes
+? RGB8 - 8-bit RGB
+? DEEP - High bit-depth
+? ACBM - With alpha channel
+? FAXX - Fax format
+? 24-bit ILBM - True-color ILBM
