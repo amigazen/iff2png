@@ -18,6 +18,79 @@
 /* Used with bitIndex = 7 - (col % 8) to get MSB first */
 static const UBYTE bit_mask[] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};
 
+/*
+** ExtractBitsFromPlane - Optimized bitplane extraction
+** Extracts bits from a plane buffer and sets corresponding bits in pixel array
+** Processes 8 pixels at a time for better performance
+** 
+** planeBuffer: Source plane data (rowBytes bytes)
+** pixelArray: Destination pixel array (width elements)
+** width: Image width in pixels
+** rowBytes: Number of bytes per row in plane buffer
+** planeBit: Bit position to set (0-31)
+** 
+** Returns: Nothing (void function)
+*/
+static VOID ExtractBitsFromPlane(const UBYTE *planeBuffer, UBYTE *pixelArray, 
+                                 UWORD width, UWORD rowBytes, UBYTE planeBit)
+{
+    UWORD byteIdx;
+    UWORD col;
+    UBYTE byte;
+    UBYTE bitMask;
+    
+    /* Process whole bytes (8 pixels at a time) */
+    for (byteIdx = 0; byteIdx < rowBytes; byteIdx++) {
+        byte = planeBuffer[byteIdx];
+        col = byteIdx * 8;
+        
+        /* Process up to 8 pixels from this byte */
+        bitMask = 0x80; /* Start with MSB (bit 7) */
+        while (bitMask != 0 && col < width) {
+            if (byte & bitMask) {
+                pixelArray[col] |= (1 << planeBit);
+            }
+            bitMask >>= 1; /* Shift to next bit (MSB to LSB) */
+            col++;
+        }
+    }
+}
+
+/*
+** ExtractAlphaFromPlane - Optimized alpha channel extraction from mask plane
+** Extracts bits from a plane buffer and sets alpha values (0xFF or 0x00)
+** Processes 8 pixels at a time for better performance
+** 
+** planeBuffer: Source plane data (rowBytes bytes)
+** alphaArray: Destination alpha array (width elements)
+** width: Image width in pixels
+** rowBytes: Number of bytes per row in plane buffer
+** 
+** Returns: Nothing (void function)
+*/
+static VOID ExtractAlphaFromPlane(const UBYTE *planeBuffer, UBYTE *alphaArray,
+                                  UWORD width, UWORD rowBytes)
+{
+    UWORD byteIdx;
+    UWORD col;
+    UBYTE byte;
+    UBYTE bitMask;
+    
+    /* Process whole bytes (8 pixels at a time) */
+    for (byteIdx = 0; byteIdx < rowBytes; byteIdx++) {
+        byte = planeBuffer[byteIdx];
+        col = byteIdx * 8;
+        
+        /* Process up to 8 pixels from this byte */
+        bitMask = 0x80; /* Start with MSB (bit 7) */
+        while (bitMask != 0 && col < width) {
+            alphaArray[col] = (byte & bitMask) ? 0xFF : 0x00;
+            bitMask >>= 1; /* Shift to next bit (MSB to LSB) */
+            col++;
+        }
+    }
+}
+
 /* FAXX compression constants */
 #define FXCMPNONE   0
 #define FXCMPMH     1
@@ -668,6 +741,8 @@ static LONG DecompressByteRun1(struct IFFHandle *iff, UBYTE *dest, LONG destByte
     UBYTE code;
     LONG count;
     UBYTE value;
+    /* Optimization: Use constant for -128 comparison to help compiler generate CMP.W */
+    LONG minus128 = -128;
     
     while (bytesLeft > 0) {
         /* Read control byte */
@@ -688,7 +763,7 @@ static LONG DecompressByteRun1(struct IFFHandle *iff, UBYTE *dest, LONG destByte
             }
             out += count;
             bytesLeft -= count;
-        } else if (code != 128) {
+        } else if (code != (UBYTE)minus128) {
             /* Repeat run: next byte repeated (256-code)+1 times */
             /* For code 129-255: count = 256-code, we write count+1 bytes */
             count = 256 - code;
@@ -883,16 +958,8 @@ LONG DecodeILBM(struct IFFPicture *picture)
                     }
                 }
                 
-                /* Extract bits from this plane */
-                for (col = 0; col < width; col++) {
-                    UBYTE byteIndex = col / 8;
-                    UBYTE bitIndex = 7 - (col % 8); /* MSB first */
-                    UBYTE bit = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 1 : 0;
-                    
-                    if (bit) {
-                        rValues[col] |= (1 << plane);
-                    }
-                }
+                /* Extract bits from this plane (optimized) */
+                ExtractBitsFromPlane(planeBuffer, rValues, width, rowBytes, plane);
             }
             
             /* Decode Green component (planes 8-15) */
@@ -921,16 +988,8 @@ LONG DecodeILBM(struct IFFPicture *picture)
                     }
                 }
                 
-                /* Extract bits from this plane */
-                for (col = 0; col < width; col++) {
-                    UBYTE byteIndex = col / 8;
-                    UBYTE bitIndex = 7 - (col % 8); /* MSB first */
-                    UBYTE bit = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 1 : 0;
-                    
-                    if (bit) {
-                        gValues[col] |= (1 << (plane - 8));
-                    }
-                }
+                /* Extract bits from this plane (optimized) */
+                ExtractBitsFromPlane(planeBuffer, gValues, width, rowBytes, plane - 8);
             }
             
             /* Decode Blue component (planes 16-23) */
@@ -959,16 +1018,8 @@ LONG DecodeILBM(struct IFFPicture *picture)
                     }
                 }
                 
-                /* Extract bits from this plane */
-                for (col = 0; col < width; col++) {
-                    UBYTE byteIndex = col / 8;
-                    UBYTE bitIndex = 7 - (col % 8); /* MSB first */
-                    UBYTE bit = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 1 : 0;
-                    
-                    if (bit) {
-                        bValues[col] |= (1 << (plane - 16));
-                    }
-                }
+                /* Extract bits from this plane (optimized) */
+                ExtractBitsFromPlane(planeBuffer, bValues, width, rowBytes, plane - 16);
             }
             
             /* Read mask plane if present (comes after all data planes) */
@@ -997,12 +1048,8 @@ LONG DecodeILBM(struct IFFPicture *picture)
                     }
                 }
                 
-                /* Extract mask bits to alpha channel */
-                for (col = 0; col < width; col++) {
-                    UBYTE byteIndex = col / 8;
-                    UBYTE bitIndex = 7 - (col % 8); /* MSB first */
-                    alphaValues[col] = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 0xFF : 0x00;
-                }
+                /* Extract mask bits to alpha channel (optimized) */
+                ExtractAlphaFromPlane(planeBuffer, alphaValues, width, rowBytes);
             }
             
             /* Write RGB output */
@@ -1057,16 +1104,8 @@ LONG DecodeILBM(struct IFFPicture *picture)
                     }
                 }
                 
-                /* Extract bits from this plane to build pixel indices */
-                for (col = 0; col < width; col++) {
-                    UBYTE byteIndex = col / 8;
-                    UBYTE bitIndex = 7 - (col % 8); /* MSB first */
-                    UBYTE bit = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 1 : 0;
-                    
-                    if (bit) {
-                        pixelIndices[col] |= (1 << plane);
-                    }
-                }
+                /* Extract bits from this plane to build pixel indices (optimized) */
+                ExtractBitsFromPlane(planeBuffer, pixelIndices, width, rowBytes, plane);
             }
             
             /* Read mask plane if present (comes after all data planes) */
@@ -1092,12 +1131,8 @@ LONG DecodeILBM(struct IFFPicture *picture)
                     }
                 }
                 
-                /* Extract mask bits to alpha channel */
-                for (col = 0; col < width; col++) {
-                    UBYTE byteIndex = col / 8;
-                    UBYTE bitIndex = 7 - (col % 8); /* MSB first */
-                    alphaValues[col] = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 0xFF : 0x00;
-                }
+                /* Extract mask bits to alpha channel (optimized) */
+                ExtractAlphaFromPlane(planeBuffer, alphaValues, width, rowBytes);
             }
             
             /* Convert pixel indices to RGB using CMAP and store original indices */
@@ -1245,16 +1280,8 @@ LONG DecodeHAM(struct IFFPicture *picture)
                 }
             }
             
-            /* Extract bits from this plane */
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8);
-                UBYTE bit = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 1 : 0;
-                
-                if (bit) {
-                    pixelValues[col] |= (1 << plane);
-                }
-            }
+            /* Extract bits from this plane (optimized) */
+            ExtractBitsFromPlane(planeBuffer, pixelValues, width, rowBytes, plane);
         }
         
         /* Decode HAM pixels */
@@ -1394,16 +1421,8 @@ LONG DecodeEHB(struct IFFPicture *picture)
                 }
             }
             
-            /* Extract bits from this plane to build pixel indices */
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8);
-                UBYTE bit = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 1 : 0;
-                
-                if (bit) {
-                    pixelIndices[col] |= (1 << plane);
-                }
-            }
+            /* Extract bits from this plane to build pixel indices (optimized) */
+            ExtractBitsFromPlane(planeBuffer, pixelIndices, width, rowBytes, plane);
         }
         
         /* Convert pixel indices to RGB using CMAP, applying EHB scaling */
@@ -2001,13 +2020,8 @@ LONG DecodeRGBN(struct IFFPicture *picture)
                 }
             }
             
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8);
-                if (planeBuffer[byteIndex] & bit_mask[bitIndex]) {
-                    rValues[col] |= (1 << plane);
-                }
-            }
+            /* Extract bits from this plane (optimized) */
+            ExtractBitsFromPlane(planeBuffer, rValues, width, rowBytes, plane);
         }
         
         /* Decode Green component (planes 4-7) */
@@ -2024,13 +2038,8 @@ LONG DecodeRGBN(struct IFFPicture *picture)
                 }
             }
             
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8);
-                if (planeBuffer[byteIndex] & bit_mask[bitIndex]) {
-                    gValues[col] |= (1 << plane);
-                }
-            }
+            /* Extract bits from this plane (optimized) */
+            ExtractBitsFromPlane(planeBuffer, gValues, width, rowBytes, plane);
         }
         
         /* Decode Blue component (planes 8-11) */
@@ -2047,13 +2056,8 @@ LONG DecodeRGBN(struct IFFPicture *picture)
                 }
             }
             
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8);
-                if (planeBuffer[byteIndex] & bit_mask[bitIndex]) {
-                    bValues[col] |= (1 << plane);
-                }
-            }
+            /* Extract bits from this plane (optimized) */
+            ExtractBitsFromPlane(planeBuffer, bValues, width, rowBytes, plane);
         }
         
         /* Scale 4-bit values to 8-bit (multiply by 17) */
@@ -2167,13 +2171,8 @@ LONG DecodeRGB8(struct IFFPicture *picture)
                 }
             }
             
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8);
-                if (planeBuffer[byteIndex] & bit_mask[bitIndex]) {
-                    rValues[col] |= (1 << plane);
-                }
-            }
+            /* Extract bits from this plane (optimized) */
+            ExtractBitsFromPlane(planeBuffer, rValues, width, rowBytes, plane);
         }
         
         /* Decode Green component (planes 8-15) */
@@ -2190,13 +2189,8 @@ LONG DecodeRGB8(struct IFFPicture *picture)
                 }
             }
             
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8);
-                if (planeBuffer[byteIndex] & bit_mask[bitIndex]) {
-                    gValues[col] |= (1 << plane);
-                }
-            }
+            /* Extract bits from this plane (optimized) */
+            ExtractBitsFromPlane(planeBuffer, gValues, width, rowBytes, plane);
         }
         
         /* Decode Blue component (planes 16-23) */
@@ -2213,13 +2207,8 @@ LONG DecodeRGB8(struct IFFPicture *picture)
                 }
             }
             
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8);
-                if (planeBuffer[byteIndex] & bit_mask[bitIndex]) {
-                    bValues[col] |= (1 << plane);
-                }
-            }
+            /* Extract bits from this plane (optimized) */
+            ExtractBitsFromPlane(planeBuffer, bValues, width, rowBytes, plane);
         }
         
         /* Write RGB output */
@@ -2359,16 +2348,8 @@ LONG DecodeACBM(struct IFFPicture *picture)
             planeOffset = (ULONG)plane * height * rowBytes + (ULONG)row * rowBytes;
             CopyMem(planeData + planeOffset, planeBuffer, rowBytes);
             
-            /* Extract bits from this plane to build pixel indices */
-            for (col = 0; col < width; col++) {
-                UBYTE byteIndex = col / 8;
-                UBYTE bitIndex = 7 - (col % 8); /* MSB first */
-                UBYTE bit = (planeBuffer[byteIndex] & bit_mask[bitIndex]) ? 1 : 0;
-                
-                if (bit) {
-                    pixelIndices[col] |= (1 << plane);
-                }
-            }
+            /* Extract bits from this plane to build pixel indices (optimized) */
+            ExtractBitsFromPlane(planeBuffer, pixelIndices, width, rowBytes, plane);
         }
         
         /* Convert pixel indices to RGB using CMAP */
