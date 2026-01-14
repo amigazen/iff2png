@@ -9,19 +9,23 @@
 
   iff2png is a command-line tool for converting IFF (Interchange File Format)
   bitmap images to PNG format. It supports all major IFF image formats
-  including ILBM, PBM, RGBN, RGB8, DEEP, ACBM, 24-bit ILBM, and FAXX.
+  including ILBM, PBM, RGBN, RGB8, DEEP, ACBM, YUVN, 24-bit ILBM, and FAXX.
 
   Features:
-  - Supports all major IFF formats (ILBM, PBM, RGBN, RGB8, DEEP, ACBM, FAXX)
+  - Supports all major IFF formats (ILBM, PBM, RGBN, RGB8, DEEP, YUVN, ACBM, FAXX)
   - Handles 24-bit ILBM (deep ILBM with true-color RGB)
   - Automatic optimal PNG encoding based on source image properties
   - Preserves transparency and alpha channels
   - Supports HAM (Hold And Modify) and EHB (Extra Half-Brite) modes
   - Preserves metadata (copyright, author, annotations) unless stripped
 
+  Version History
+  - 1.4: Added YUVN, fixed major issues in DEEP support, optimised bitplane extraction algorithms
+  - 1.3: First public release on Aminet
+
   Requirements:
   - AmigaOS 3.1 or higher
-  - 68020 CPU
+  - 68020 CPU (but source is available to build other targets)
 
   Usage:
     iff2png SOURCE TARGET [OPTIONS]
@@ -50,6 +54,7 @@
   - RGB8 - RGB 8-bit format (24-bit color, 32-bit with alpha)
   - DEEP - High bit-depth format for professional graphics
   - ACBM (Amiga Continuous BitMap) - Format with separate alpha channel
+  - YUVN - for YUV-pictures which were mainly used in broadcast television
   - 24-bit ILBM - Deep ILBM with 24 bitplanes for true-color RGB
   - FAXX - Facsimile image format using ITU-T T.4 compression
 
