@@ -106,7 +106,6 @@ LONG PNGEncoder_Write(const char *filename, UBYTE *rgbData,
     info_ptr = NULL;
     palette = NULL;
     trans = NULL;
-    filehandle = NULL;
     
     /* Open file for writing */
     filehandle = Open((STRPTR)filename, MODE_NEWFILE);

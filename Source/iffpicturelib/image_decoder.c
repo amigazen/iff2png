@@ -14,10 +14,6 @@
 /* Helper macros */
 #define RowBytes(w) ((((w) + 15) >> 4) << 1)  /* Round up to 16-bit boundary */
 
-/* Bit masks for extracting bits from bytes - LSB to MSB order (index 0=LSB, 7=MSB) */
-/* Used with bitIndex = 7 - (col % 8) to get MSB first */
-static const UBYTE bit_mask[] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};
-
 /*
 ** ExtractBitsFromPlane - Optimized bitplane extraction
 ** Extracts bits from a plane buffer and sets corresponding bits in pixel array
@@ -608,7 +604,6 @@ static LONG DecodeMRLine(FaxBitstream *bs, UBYTE *output, UBYTE *refLine, UWORD 
     /* Initialize */
     a0 = 0;
     isWhite = TRUE; /* Lines start with white */
-    curpos = curline;
     curposIndex = 0;
     
     /* Helper function to find b1 and b2 on reference line */
@@ -980,6 +975,7 @@ static LONG PrepareBodyDecodeBufferRowMajor(struct IFFPicture *picture)
     ULONG remaining;
     ULONG cnSize;
     UBYTE *rowDest;
+    BOOL bodyBufOwned;
 
     width = picture->bmhd->w;
     height = picture->bmhd->h;
@@ -1005,20 +1001,33 @@ static LONG PrepareBodyDecodeBufferRowMajor(struct IFFPicture *picture)
         picture->bodyDecodeSize = 0;
     }
 
-    bodyBuf = (UBYTE *)AllocMem(cnSize, MEMF_PUBLIC | MEMF_CLEAR);
-    if (!bodyBuf) {
-        SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate BODY buffer for ByteRun1 preload");
-        return RETURN_FAIL;
-    }
-    if (ReadChunkBytes(picture->iff, bodyBuf, (LONG)cnSize) != (LONG)cnSize) {
-        FreeMem(bodyBuf, cnSize);
-        SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read BODY for ByteRun1 preload");
-        return RETURN_FAIL;
+    bodyBufOwned = TRUE;
+    if (picture->bodyReadCache && picture->bodyReadCacheSize > 0) {
+        bodyBuf = picture->bodyReadCache;
+        cnSize = picture->bodyReadCacheSize;
+        bodyBufOwned = FALSE;
+    } else {
+        bodyBuf = (UBYTE *)AllocMem(cnSize, MEMF_PUBLIC | MEMF_CLEAR);
+        if (!bodyBuf) {
+            SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate BODY buffer for ByteRun1 preload");
+            return RETURN_FAIL;
+        }
+        if (ReadChunkBytes(picture->iff, bodyBuf, (LONG)cnSize) != (LONG)cnSize) {
+            FreeMem(bodyBuf, cnSize);
+            SetIFFPictureError(picture, IFFPICTURE_BADFILE, "Failed to read BODY for ByteRun1 preload");
+            return RETURN_FAIL;
+        }
+        picture->bodyReadCache = bodyBuf;
+        picture->bodyReadCacheSize = cnSize;
+        picture->bodyReadRawOffset = 0;
+        bodyBufOwned = FALSE;
     }
 
     rowMajorBuf = (UBYTE *)AllocMem(rawSize, MEMF_PUBLIC | MEMF_CLEAR);
     if (!rowMajorBuf) {
-        FreeMem(bodyBuf, cnSize);
+        if (bodyBufOwned) {
+            FreeMem(bodyBuf, cnSize);
+        }
         SetIFFPictureError(picture, IFFPICTURE_NOMEM, "Failed to allocate decode buffer for ByteRun1 preload");
         return RETURN_FAIL;
     }
@@ -1028,7 +1037,9 @@ static LONG PrepareBodyDecodeBufferRowMajor(struct IFFPicture *picture)
         for (p = 0; p < (UWORD)nPlanes; p++) {
             if (inPos > cnSize) {
                 FreeMem(rowMajorBuf, rawSize);
-                FreeMem(bodyBuf, cnSize);
+                if (bodyBufOwned) {
+                    FreeMem(bodyBuf, cnSize);
+                }
                 SetIFFPictureError(picture, IFFPICTURE_BADFILE, "ByteRun1 preload overran BODY");
                 return RETURN_FAIL;
             }
@@ -1037,7 +1048,9 @@ static LONG PrepareBodyDecodeBufferRowMajor(struct IFFPicture *picture)
             consumed = UnpackByteRun1Exact(bodyBuf + inPos, remaining, rowDest, (ULONG)rowBytes);
             if (consumed < 0) {
                 FreeMem(rowMajorBuf, rawSize);
-                FreeMem(bodyBuf, cnSize);
+                if (bodyBufOwned) {
+                    FreeMem(bodyBuf, cnSize);
+                }
                 SetIFFPictureError(picture, IFFPICTURE_BADFILE, "ByteRun1 plane row decode failed in preload");
                 return RETURN_FAIL;
             }
@@ -1045,7 +1058,9 @@ static LONG PrepareBodyDecodeBufferRowMajor(struct IFFPicture *picture)
         }
     }
 
-    FreeMem(bodyBuf, cnSize);
+    if (bodyBufOwned) {
+        FreeMem(bodyBuf, cnSize);
+    }
 
     if (inPos != cnSize) {
         FreeMem(rowMajorBuf, rawSize);
@@ -1077,6 +1092,11 @@ static LONG ReadBodyRow(struct IFFPicture *picture, UBYTE *dest, ULONG rowBytes)
     }
     if (picture->bmhd->compression != cmpNone) {
         return -1;  /* Unsupported compression (e.g. > 2) */
+    }
+    if (picture->bodyReadCache && picture->bodyReadRawOffset + rowBytes <= picture->bodyReadCacheSize) {
+        CopyMem(picture->bodyReadCache + picture->bodyReadRawOffset, dest, rowBytes);
+        picture->bodyReadRawOffset += rowBytes;
+        return (LONG)rowBytes;
     }
     return (LONG)ReadChunkBytes(picture->iff, dest, rowBytes);
 }
@@ -1513,10 +1533,6 @@ LONG DecodeILBM(struct IFFPicture *picture)
     
     workPal = NULL;
     mpalOn = FALSE;
-    alphaValues = NULL;
-    cmapData = NULL;
-    paletteOut = NULL;
-    destM = NULL;
     
     if (!picture || !picture->bmhd) {
         SetIFFPictureError(picture, IFFPICTURE_INVALID, "Missing BMHD for ILBM decoding");
@@ -2260,7 +2276,6 @@ LONG DecodeHAM(struct IFFPicture *picture)
     
     workPal = NULL;
     mpalOn = FALSE;
-    hamPal = NULL;
     alphaValues = NULL;
     lassoIdxBuf = NULL;
     
@@ -2614,7 +2629,6 @@ LONG DecodeEHB(struct IFFPicture *picture)
     workPal = NULL;
     mpalOn = FALSE;
     alphaValues = NULL;
-    paletteOut = NULL;
     
     if (!picture || !picture->bmhd || !picture->cmap || !picture->cmap->data) {
         SetIFFPictureError(picture, IFFPICTURE_INVALID, "Missing BMHD or CMAP for EHB decoding");
@@ -2988,7 +3002,6 @@ static LONG DecompressDEEPTVDC(struct IFFHandle *iff, UBYTE *dest, LONG destByte
 LONG DecodeDEEP(struct IFFPicture *picture)
 {
     UWORD width, height;
-    UWORD displayWidth, displayHeight;
     UWORD compression;
     ULONG nElements;
     ULONG pixelSizeBytes;
@@ -3003,12 +3016,9 @@ LONG DecodeDEEP(struct IFFPicture *picture)
     ULONG i;
     BOOL hasRed, hasGreen, hasBlue, hasAlpha;
     UBYTE redIdx, greenIdx, blueIdx, alphaIdx;
-    UBYTE redBits, greenBits, blueBits, alphaBits;
     UBYTE *elementData;
     ULONG elementOffset;
-    ULONG bitOffset;
     ULONG value;
-    UBYTE shift;
     
     if (!picture || !picture->dgbl || !picture->dpel) {
         SetIFFPictureError(picture, IFFPICTURE_INVALID, "Missing DGBL or DPEL for DEEP decoding");
@@ -3024,8 +3034,6 @@ LONG DecodeDEEP(struct IFFPicture *picture)
         height = picture->dgbl->DisplayHeight;
     }
     
-    displayWidth = picture->dgbl->DisplayWidth;
-    displayHeight = picture->dgbl->DisplayHeight;
     compression = picture->dgbl->Compression;
     nElements = picture->dpel->nElements;
     
@@ -3046,29 +3054,24 @@ LONG DecodeDEEP(struct IFFPicture *picture)
     /* Find RGB/Alpha component indices */
     hasRed = hasGreen = hasBlue = hasAlpha = FALSE;
     redIdx = greenIdx = blueIdx = alphaIdx = 0;
-    redBits = greenBits = blueBits = alphaBits = 0;
     
     for (i = 0; i < nElements; i++) {
         switch (picture->dpel->typedepth[i].cType) {
             case DEEP_TYPE_RED:
                 hasRed = TRUE;
                 redIdx = (UBYTE)i;
-                redBits = (UBYTE)picture->dpel->typedepth[i].cBitDepth;
                 break;
             case DEEP_TYPE_GREEN:
                 hasGreen = TRUE;
                 greenIdx = (UBYTE)i;
-                greenBits = (UBYTE)picture->dpel->typedepth[i].cBitDepth;
                 break;
             case DEEP_TYPE_BLUE:
                 hasBlue = TRUE;
                 blueIdx = (UBYTE)i;
-                blueBits = (UBYTE)picture->dpel->typedepth[i].cBitDepth;
                 break;
             case DEEP_TYPE_ALPHA:
                 hasAlpha = TRUE;
                 alphaIdx = (UBYTE)i;
-                alphaBits = (UBYTE)picture->dpel->typedepth[i].cBitDepth;
                 break;
         }
     }
@@ -3286,7 +3289,6 @@ LONG DecodePBM(struct IFFPicture *picture)
     workPal = NULL;
     mpalOn = FALSE;
     maskRow = NULL;
-    paletteOut = NULL;
     
     if (!picture || !picture->bmhd) {
         SetIFFPictureError(picture, IFFPICTURE_INVALID, "Missing BMHD for PBM decoding");
@@ -4345,12 +4347,10 @@ LONG DecodeYUVN(struct IFFPicture *picture)
     UBYTE y, u, v;
     LONG r, g, b;
     BOOL isColor;
-    BOOL isLores;
     UBYTE *alphaData;
     BOOL hasAlpha;
     UBYTE *alphaBuf;
     ULONG alphaSize;
-    struct ContextNode *cn;
     UBYTE *yRow;
     UBYTE *uRow;
     UBYTE *vRow;
@@ -4367,7 +4367,6 @@ LONG DecodeYUVN(struct IFFPicture *picture)
     
     /* Determine if color or grayscale */
     isColor = (ychd->ychd_Mode != YCHD_MODE_400 && ychd->ychd_Mode != YCHD_MODE_200);
-    isLores = (ychd->ychd_Mode >= YCHD_MODE_200);
     
     /* Calculate U and V buffer sizes and step values based on mode */
     switch (ychd->ychd_Mode) {
@@ -4558,13 +4557,12 @@ LONG DecodeYUVN(struct IFFPicture *picture)
     /* Check for DATA chunk (alpha channel) after DATV (color) or DATY (grayscale) */
     hasAlpha = FALSE;
     alphaData = NULL;
-    alphaBuf = NULL;
-    alphaSize = 0;
-    cn = NULL;
     
     /* Try to parse to DATA chunk (optional alpha) */
     /* For color images, DATA comes after DATV; for grayscale, after DATY */
     if (ParseIFF(picture->iff, IFFPARSE_STEP) == 0) {
+        struct ContextNode *cn;
+
         cn = CurrentChunk(picture->iff);
         if (cn && cn->cn_ID == ID_DATA) {
             /* DATA chunk found - read alpha channel */

@@ -328,7 +328,7 @@ struct BitMap *DecodeToBitMap(struct IFFPicture *picture, ULONG modeID, struct B
                     isChunky = TRUE;
                 }
             }
-            FreeDisplayInfoData(handle);
+            /* FindDisplayInfo handle is not allocated; no release call */
         }
     }
     

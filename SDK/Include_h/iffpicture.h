@@ -484,6 +484,7 @@ BOOL HasAlpha(struct IFFPicture *picture);
 BOOL IsHAM(struct IFFPicture *picture);
 BOOL IsEHB(struct IFFPicture *picture);
 BOOL IsFramestore(struct IFFPicture *picture);  /* TRUE if NewTek Video Toaster framestore (16-plane ILBM + PLTP) */
+BOOL IsDCTV(struct IFFPicture *picture);        /* TRUE if DCTV ILBM (Digital Component Television Video) */
 BOOL IsDigiViewRgb(struct IFFPicture *picture); /* TRUE if 21-plane Digi-View RGB body and/or DGVW chunk */
 BOOL IsCompressed(struct IFFPicture *picture);
 ULONG GetMultipaletteChunkId(struct IFFPicture *picture);
@@ -503,6 +504,7 @@ struct IFFImageInfo {
     BOOL isHAM;                 /* TRUE if image uses HAM mode */
     BOOL isEHB;                 /* TRUE if image uses Extra Half-Brite mode */
     BOOL isFramestore;          /* TRUE if NewTek Video Toaster framestore (16-plane ILBM + PLTP) */
+    BOOL isDCTV;                /* TRUE if DCTV ILBM (YUV-encoded 3/4-plane body) */
     BOOL isDigiViewRgb;         /* TRUE if 21-plane Digi-View RGB and/or DGVW (see IsDigiViewRgb) */
     BOOL isCompressed;          /* TRUE if image data is compressed */
     ULONG multipaletteChunkId;  /* IFF chunk ID from GetMultipaletteChunkId(), or 0 */

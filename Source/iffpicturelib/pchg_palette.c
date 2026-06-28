@@ -7,6 +7,7 @@
 
 #include "iffpicture_private.h"
 #include <proto/exec.h>
+#include <proto/iffparse.h>
 
 #define PCHG_COMP_NONE     0
 #define PCHG_COMP_HUFFMANN 1
@@ -98,7 +99,10 @@ ULONG IFFMultipalette_SourceChunkId(const struct IFFPicture *picture)
 
 BOOL IFFMultipalette_Active(const struct IFFPicture *picture)
 {
-    return IFFMultipalette_SourceChunkId(picture) != 0UL ? TRUE : FALSE;
+    if (IFFMultipalette_SourceChunkId(picture) != 0UL) {
+        return TRUE;
+    }
+    return FALSE;
 }
 
 /*
@@ -358,7 +362,6 @@ static void mp_pchg_start(struct IFFMultipaletteState *st, UBYTE *pal768)
     UWORD colrgb;
 
     mask = (UBYTE *)st->ms_maskPtr;
-    data = st->ms_data;
     dataremaining = st->ms_dataRemain;
     changedLines = (SHORT)st->ms_changedLines;
     lineCount = st->ms_lineCount;

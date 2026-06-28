@@ -17,6 +17,7 @@
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/iffparse.h>
+#include <proto/utility.h>
 
 #include "iffsound.h"
 #include "aiff_encoder.h"

@@ -8,7 +8,7 @@
 #include "iff2aiff.h"
 #include "debug.h"
 
-static const char *verstag = "$VER: iff2aiff 1.0 (6.3.2026)";
+static const char *verstag = "$VER: iff2aiff 1.1 (17.5.2026)";
 static const char *stack_cookie = "$STACK: 4096";
 long oslibversion = 40L;
 
@@ -38,7 +38,6 @@ int main(int argc, char **argv)
     BPTR lock;
     BPTR targetLock;
     struct FileInfoBlock fib;
-    ULONG sourceFileSize;
     ULONG targetFileSize;
     UBYTE outputBuffer[512];
     struct AIFFEncoderProfile profile;
@@ -97,7 +96,6 @@ int main(int argc, char **argv)
         return (int)RETURN_FAIL;
     }
 
-    sourceFileSize = 0;
     if (Examine(lock, &fib)) {
         if (fib.fib_DirEntryType > 0) {
             UnLock(lock);
@@ -106,7 +104,6 @@ int main(int argc, char **argv)
             IFFParseBase = NULL;
             return (int)RETURN_FAIL;
         }
-        sourceFileSize = fib.fib_Size;
     }
     UnLock(lock);
 

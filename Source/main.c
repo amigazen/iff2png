@@ -10,7 +10,7 @@
 
 /* Amiga version strings - kept as static to prevent "unreachable" warnings */
 /* These are referenced by the linker/loader, not by code */
-static const char *verstag = "$VER: iff2png 1.7 (6/4/2026)";
+static const char *verstag = "$VER: iff2png 1.8 (17/5/2026)";
 static const char *stack_cookie = "$STACK: 4096";
 long oslibversion  = 40L; 
 
@@ -740,6 +740,8 @@ int main(int argc, char **argv)
             if (formType == ID_ILBM) {
                 if (IsFramestore(picture)) {
                     subFormat = "Video Toaster Framestore (16-plane quadrature YCbCr)";
+                } else if (IsDCTV(picture)) {
+                    subFormat = "DCTV (Digital Component Television Video)";
                 } else if (bmhd->nPlanes == 24 && !IsHAM(picture) && !IsEHB(picture)) {
                     subFormat = "24-bit true color";
                 } else if (IsHAM(picture)) {
@@ -783,8 +785,7 @@ int main(int argc, char **argv)
                 newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1, ")");
                 len = (len - 1) + newLen;
             }
-            newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1, "\n");
-            len = (len - 1) + newLen;
+            (void)SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1, "\n");
             PutStr((STRPTR)outputBuffer);
         }
         
@@ -1035,12 +1036,10 @@ int main(int argc, char **argv)
             /* Append ratio */
             if (sourceFileSize > 0) {
                 ratio = (targetFileSize * 100) / sourceFileSize;
-                newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1,
-                                  " (ratio: %lu%%)\n", ratio);
-                len = (len - 1) + newLen;
+                (void)SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1,
+                               " (ratio: %lu%%)\n", ratio);
             } else {
-                newLen = SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1, "\n");
-                len = (len - 1) + newLen;
+                (void)SNPrintf((STRPTR)outputBuffer + len - 1, sizeof(outputBuffer) - len + 1, "\n");
             }
             
             /* Output the complete string */

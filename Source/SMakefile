@@ -18,7 +18,7 @@ AIFF2AIFF_OBJS = iff2aiff.o aiff_encoder.o
 LIB_OBJS = iffpicturelib/iffpicture.o iffpicturelib/image_decoder.o \
            iffpicturelib/pchg_palette.o iffpicturelib/image_analyzer.o \
            iffpicturelib/bitmap_renderer.o iffpicturelib/metadata_reader.o \
-           iffpicturelib/utils.o
+           iffpicturelib/dctv_decoder.o iffpicturelib/dctv_tables.o
 
 # Uncomment the next line to enable debug output:
 # DEBUG_FLAG = DEFINE=DEBUG
@@ -108,8 +108,11 @@ iffpicturelib/bitmap_renderer.o: iffpicturelib/bitmap_renderer.c iffpicturelib/i
 iffpicturelib/metadata_reader.o: iffpicturelib/metadata_reader.c iffpicturelib/iffpicture_private.h
 	sc $(CFLAGS) OBJNAME=$@ iffpicturelib/metadata_reader.c
 
-iffpicturelib/utils.o: iffpicturelib/utils.c iffpicturelib/iffpicture_private.h
-	sc $(CFLAGS) OBJNAME=$@ iffpicturelib/utils.c
+iffpicturelib/dctv_decoder.o: iffpicturelib/dctv_decoder.c iffpicturelib/iffpicture_private.h
+	sc $(CFLAGS) OBJNAME=$@ iffpicturelib/dctv_decoder.c
+
+iffpicturelib/dctv_tables.o: iffpicturelib/dctv_tables.c
+	sc $(CFLAGS) OBJNAME=$@ iffpicturelib/dctv_tables.c
 
 clean:
 	-delete $(MAIN_OBJS) $(LIB_OBJS) $(TARGET) $(TARGET).ld $(LIBTARGET)

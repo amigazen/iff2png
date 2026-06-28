@@ -183,6 +183,13 @@ VOID FreeIFFPicture(struct IFFPicture *picture)
         picture->bodyDecodeOffset = 0;
         picture->bodyDecodeSize = 0;
     }
+
+    if (picture->bodyReadCache) {
+        FreeMem(picture->bodyReadCache, picture->bodyReadCacheSize);
+        picture->bodyReadCache = NULL;
+        picture->bodyReadCacheSize = 0;
+        picture->bodyReadRawOffset = 0;
+    }
     
     /* Multipalette chunk copies */
     if (picture->mpalShamAlloc) {
@@ -836,6 +843,10 @@ LONG ParseIFFPicture(struct IFFPicture *picture)
             picture->isFramestore = TRUE;
             picture->isIndexed = FALSE;
         }
+        /* DCTV candidate: 3/4-plane ILBM with YUV body (confirmed at decode via LFSR) */
+        if (IsDCTVCandidate(picture)) {
+            picture->isIndexed = FALSE;
+        }
         
         /* Read and store metadata chunks */
         ReadAllMeta(picture);
@@ -1032,6 +1043,14 @@ BOOL IsFramestore(struct IFFPicture *picture)
     return picture->isFramestore;
 }
 
+BOOL IsDCTV(struct IFFPicture *picture)
+{
+    if (!picture) {
+        return FALSE;
+    }
+    return picture->isDCTV;
+}
+
 BOOL IsDigiViewRgb(struct IFFPicture *picture)
 {
     if (!picture) {
@@ -1092,6 +1111,7 @@ struct IFFImageInfo *GetImageInfo(struct IFFPicture *picture)
     info.isHAM = IsHAM(picture);
     info.isEHB = IsEHB(picture);
     info.isFramestore = IsFramestore(picture);
+    info.isDCTV = IsDCTV(picture);
     info.isDigiViewRgb = picture->isDigiViewRgb;
     info.isCompressed = IsCompressed(picture);
     info.multipaletteChunkId = GetMultipaletteChunkId(picture);
@@ -2815,6 +2835,11 @@ LONG Decode(struct IFFPicture *picture)
                 result = DecodeHAM(picture);
             } else if (picture->isEHB) {
                 result = DecodeEHB(picture);
+            } else if (IsDCTVCandidate(picture)) {
+                result = DecodeDCTV(picture);
+                if (result == IFFPICTURE_NOT_DCTV) {
+                    result = DecodeILBM(picture);
+                }
             } else {
                 result = DecodeILBM(picture);
             }
